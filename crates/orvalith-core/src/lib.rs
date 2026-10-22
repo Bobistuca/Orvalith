@@ -6,6 +6,7 @@
 pub mod compose;
 pub mod document;
 pub mod history;
+pub mod view;
 
 pub use document::{Document, DocumentId, Layer, LayerId};
 pub use history::{Command, History};
