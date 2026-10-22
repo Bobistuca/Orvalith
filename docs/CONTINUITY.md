@@ -13,5 +13,5 @@ tags: [orvalith, continuidade]
 - **Git:** branch `main`, remote `origin` = https://github.com/Bobistuca/Orvalith.git (repositório estava vazio).
 - **Integrações:** skill `graphify` instalada em `~/.claude/skills/graphify`; nenhuma skill de Obsidian encontrada (documentação em Markdown com wikilinks). Mapa Graphify ainda não gerado (aguardar mais código).
 - **Checks do último checkpoint:** ver [[docs/TESTING]] e CHANGELOG.
-- **Bloqueios:** `git push` negado (HTTP 403): a credencial Git da máquina autentica como `lukasclt`, sem permissão em Bobistuca/Orvalith. Commit local feito; push pendente até haver acesso (adicionar `lukasclt` como colaborador ou autenticar como Bobistuca).
+- **Bloqueios:** nenhum. Push de main para origin concluído (credencial trocada).
 - **Próxima ação:** Estágio 1 — canvas com zoom/pan/fit/100%, abas com fechar, atalhos sensíveis a foco, preferências.
