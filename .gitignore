@@ -1,0 +1,13 @@
+/target
+*.orva.autosave
+*.tmp
+.env
+# Cofre Obsidian pessoal e estado local (nao publicar)
+/Orvalith/
+.obsidian/
+graphify-out/cache/
+# Arquivos pessoais: apenas fixtures sinteticas em tests/fixtures
+*.psd
+*.psb
+*.pcraft
+!tests/fixtures/**

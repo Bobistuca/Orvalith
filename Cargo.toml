@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/orvalith-core", "crates/orvalith"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Bobistuca/Orvalith"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

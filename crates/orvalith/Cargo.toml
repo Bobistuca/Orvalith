@@ -1,0 +1,10 @@
+[package]
+name = "orvalith"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Orvalith - editor de imagens desktop, local e sem login"
+
+[dependencies]
+eframe = "0.37.0"
+orvalith-core = { path = "../orvalith-core" }
