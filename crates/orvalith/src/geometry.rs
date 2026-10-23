@@ -63,6 +63,8 @@ pub struct TransformSession {
     doc: DocumentId,
     before: DocState,
     originals: Vec<(LayerId, Arc<Vec<u8>>)>,
+    /// Máscaras vinculadas das camadas-alvo (transformadas junto, exceto com seleção ativa).
+    mask_originals: Vec<(LayerId, Arc<Vec<u8>>)>,
     mask: Option<Arc<Vec<u8>>>,
     bounds: Rect,
     pub mode: TMode,
@@ -156,10 +158,24 @@ impl TransformSession {
             .iter()
             .filter_map(|id| open.doc.layer(*id).map(|l| (*id, l.pixels.clone())))
             .collect();
+        let mask_originals = if mask.is_none() {
+            targets
+                .iter()
+                .filter_map(|id| {
+                    open.doc
+                        .layer(*id)
+                        .and_then(|l| l.mask.as_ref().filter(|m| m.linked))
+                        .map(|m| (*id, m.data().clone()))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let quad = rect_corners(bounds);
         let mut s = Self {
             doc: open.doc.id,
             before: DocState::of(&open.doc),
+            mask_originals,
             originals,
             mask,
             bounds,
@@ -341,6 +357,22 @@ impl TransformSession {
         for (id, px) in results {
             if let Some(l) = open.doc.layer_mut(id) {
                 l.pixels = Arc::new(px);
+            }
+        }
+        // Máscaras vinculadas acompanham a transformação; a área nova fica visível (255).
+        for (id, md) in &self.mask_originals {
+            if md.len() != w as usize * h as usize {
+                continue;
+            }
+            let inv: Vec<u8> = md
+                .iter()
+                .flat_map(|&v| [255 - v, 255 - v, 255 - v, 255])
+                .collect();
+            if let Some(out) = self.warp(&inv, w, h, Interp::Bilinear) {
+                let new: Vec<u8> = out.as_chunks::<4>().0.iter().map(|p| 255 - p[0]).collect();
+                if let Some(m) = open.doc.layer_mut(*id).and_then(|l| l.mask.as_mut()) {
+                    m.set_data(Arc::new(new));
+                }
             }
         }
         if let Some(m) = &self.mask {
@@ -1468,6 +1500,37 @@ mod tests {
         assert_eq!(back.layers[0].pixel(5, 1), Some([255, 0, 0, 255]));
         assert_eq!(back.layers[0].pixel(0, 0).unwrap()[3], 0);
         assert_eq!(back.guides[0].pos, 12.0);
+    }
+
+    #[test]
+    fn linked_mask_follows_transform_and_unlinked_stays() {
+        use orvalith_core::LayerMask;
+        for linked in [true, false] {
+            let mut o = open();
+            let mut mk = vec![255u8; 20 * 12];
+            mk[3 * 20 + 3] = 0;
+            let mut m = LayerMask::new(mk);
+            m.linked = linked;
+            o.doc.layers[0].mask = Some(m);
+            let mut g = GeoState::default();
+            assert!(g.start_transform(&mut o, TMode::Free).is_none());
+            {
+                let t = g.transform.as_mut().unwrap();
+                t.tx = 5.0;
+                t.interp = Interp::Nearest;
+                t.refresh(&mut o);
+            }
+            g.commit(&mut o);
+            let md = o.doc.layers[0].mask.as_ref().unwrap().data().clone();
+            if linked {
+                assert_eq!(md[3 * 20 + 8], 0, "marca andou 5 px");
+                assert_eq!(md[3 * 20 + 3], 255);
+            } else {
+                assert_eq!(md[3 * 20 + 3], 0, "máscara desvinculada fica");
+            }
+            o.history.undo(&mut o.doc);
+            assert_eq!(o.doc.layers[0].mask.as_ref().unwrap().data()[3 * 20 + 3], 0);
+        }
     }
 
     #[test]

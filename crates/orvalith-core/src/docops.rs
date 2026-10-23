@@ -170,6 +170,12 @@ pub fn reframe(
         l.width = nw;
         l.height = nh;
     }
+    for l in &mut st.layers {
+        if let Some(m) = l.mask.as_mut() {
+            let nd = reframe_buf(m.data(), doc.width, doc.height, nw, nh, ox, oy, 1, &[255]);
+            m.set_data(std::sync::Arc::new(nd));
+        }
+    }
     let remap = |m: &std::sync::Arc<Vec<u8>>| {
         std::sync::Arc::new(reframe_buf(
             m,
@@ -246,6 +252,12 @@ pub fn resize_image(
         l.width = nw;
         l.height = nh;
     }
+    for l in &mut st.layers {
+        if let Some(m) = l.mask.as_mut() {
+            let nd = transform::resample_mask(m.data(), doc.width, doc.height, nw, nh);
+            m.set_data(std::sync::Arc::new(nd));
+        }
+    }
     let rs = |m: &std::sync::Arc<Vec<u8>>| {
         std::sync::Arc::new(transform::resample_mask(m, doc.width, doc.height, nw, nh))
     };
@@ -319,6 +331,11 @@ pub fn orient_canvas(doc: &Document, o: Orient) -> Result<DocState, String> {
         l.pixels = std::sync::Arc::new(orient_buf(&l.pixels, l.width, l.height, 4, o));
         l.width = nw;
         l.height = nh;
+    }
+    for l in &mut st.layers {
+        if let Some(m) = l.mask.as_mut() {
+            m.set_data(std::sync::Arc::new(orient_buf(m.data(), w, h, 1, o)));
+        }
     }
     let om = |m: &std::sync::Arc<Vec<u8>>| std::sync::Arc::new(orient_buf(m, w, h, 1, o));
     st.selection.mask = st.selection.mask.as_ref().map(om);
@@ -427,6 +444,12 @@ pub fn straighten(doc: &Document, angle_deg: f32, interp: Interp) -> Result<DocS
             })
             .unwrap_or_else(|| std::sync::Arc::new(vec![0; nw as usize * nh as usize]))
     };
+    for l in &mut st.layers {
+        if let Some(m) = l.mask.as_mut() {
+            let nd = warp_mask(m.data());
+            m.set_data(nd);
+        }
+    }
     st.selection.mask = st
         .selection
         .mask
@@ -494,6 +517,10 @@ fn shift_node(layers: &mut [Layer], doc: &Document, id: LayerId, dx: i32, dy: i3
         if let Some(l) = layers.iter_mut().find(|l| l.id == r) {
             if !l.lock_position {
                 l.pixels = std::sync::Arc::new(shifted_pixels(l, dx, dy));
+                if let Some(m) = l.mask.as_mut().filter(|m| m.linked) {
+                    let nd = crate::selection::shift_mask(m.data(), l.width, l.height, dx, dy, 255);
+                    m.set_data(std::sync::Arc::new(nd));
+                }
                 moved = true;
             }
         }
@@ -854,6 +881,45 @@ mod tests {
         // Vão total 34 - 12 = 22 -> 11 entre cada par.
         assert_eq!(xs, vec![0, 15, 30]);
         assert!(distribute(&d, &ids[..2], true).is_none());
+    }
+
+    #[test]
+    fn layer_masks_follow_reframe_resize_orient_and_linked_shift() {
+        use crate::LayerMask;
+        let mut d = Document::new("t", 8, 6, Some([5, 5, 5, 255])).unwrap();
+        let mut m = vec![255u8; 48];
+        m[2 * 8 + 1] = 0; // marca em (1, 2)
+        d.layers[0].mask = Some(LayerMask::new(m));
+        let cm = |st: &DocState| st.layers[0].mask.as_ref().unwrap().data().clone();
+        let st = crop(&d, 1, 1, 4, 3).unwrap();
+        assert_eq!(cm(&st).len(), 12);
+        assert_eq!(cm(&st)[4], 0, "marca em (0, 1) após o recorte");
+        let st = resize_image(&d, 16, 12, Interp::Nearest, None).unwrap();
+        assert_eq!(cm(&st).len(), 192);
+        let st = orient_canvas(&d, Orient::Cw90).unwrap();
+        // (1, 2) em 8x6 -> (h-1-y, x) = (3, 1) em 6x8.
+        assert_eq!(cm(&st)[6 + 3], 0);
+        assert_eq!(cm(&st).len(), 48);
+        let st = straighten(&d, 3.0, Interp::Bilinear).unwrap();
+        assert_eq!(cm(&st).len() as u32, st.width * st.height);
+        // Deslocamento vinculado leva a máscara junto; desvinculado, não.
+        let mut e = Document::new("t", 8, 6, None).unwrap();
+        e.layers[0].set_pixel(1, 1, [1, 1, 1, 255]);
+        let mut mk = vec![255u8; 48];
+        mk[8 + 1] = 0;
+        e.layers[0].mask = Some(LayerMask::new(mk));
+        let id = e.layers[0].id;
+        let l = align(&e, &[id], AlignKind::Right, Rect::full(8, 6)).unwrap();
+        let md = l[0].mask.as_ref().unwrap().data();
+        assert_eq!(md[8 + 7], 0, "marca acompanhou o conteúdo para a direita");
+        assert_eq!(md[8 + 1], 255);
+        e.layers[0].mask.as_mut().unwrap().linked = false;
+        let l = align(&e, &[id], AlignKind::Right, Rect::full(8, 6)).unwrap();
+        assert_eq!(
+            l[0].mask.as_ref().unwrap().data()[8 + 1],
+            0,
+            "desvinculada fica no lugar"
+        );
     }
 
     #[test]

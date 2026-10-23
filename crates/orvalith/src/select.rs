@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use eframe::egui;
 use orvalith_core::edit::{SelectionEdit, SelectionState};
+use orvalith_core::maskops::{self, RefineParams};
 use orvalith_core::selection::{self as sel, Combine};
-use orvalith_core::{compose, Channel, DocumentId, Selection};
+use orvalith_core::{compose, Channel, DocumentId, LayerId, Selection};
 
 use crate::canvas::{CanvasOut, OpenDoc, Shape};
 use crate::tools::Tool;
@@ -73,6 +74,7 @@ pub struct SelectState {
     pub transform: Option<TransformDialog>,
     pub range: Option<RangeDialog>,
     pub channels_open: bool,
+    pub refine: Option<(RefineTarget, RefineParams)>,
     channel_name: String,
     channel_mode: Combine,
 }
@@ -94,10 +96,78 @@ impl Default for SelectState {
             transform: None,
             range: None,
             channels_open: false,
+            refine: None,
             channel_name: String::new(),
             channel_mode: Combine::Replace,
         }
     }
+}
+
+/// O que o diálogo "Refinar borda" modifica.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RefineTarget {
+    Mask(LayerId),
+    Selection,
+}
+
+/// Carrega o canal salvo `idx` combinando com a seleção atual.
+pub fn channel_load(open: &mut OpenDoc, idx: usize, mode: Combine) {
+    let Some(ch) = open.doc.channels.get(idx) else {
+        return;
+    };
+    let mask = ch.mask.clone();
+    let result = sel::combine(
+        open.doc.selection.mask.as_deref().map(Vec::as_slice),
+        &mask,
+        mode,
+    );
+    set_selection(open, "Carregar seleção", result);
+}
+
+pub fn channel_delete(open: &mut OpenDoc, idx: usize) {
+    if idx >= open.doc.channels.len() {
+        return;
+    }
+    if open.channel_view == Some(open.doc.channels[idx].id) {
+        open.channel_view = None;
+    }
+    let before = SelectionState::of(&open.doc);
+    let mut after = before.clone();
+    after.channels.remove(idx);
+    open.execute_nonpixel(Box::new(SelectionEdit::new("Excluir canal", before, after)));
+    open.doc.modified = true;
+    open.doc.bump_view();
+}
+
+pub fn channel_rename(open: &mut OpenDoc, id: u64, name: &str) {
+    if name.is_empty() {
+        return;
+    }
+    let before = SelectionState::of(&open.doc);
+    let mut after = before.clone();
+    match after.channels.iter_mut().find(|c| c.id == id) {
+        Some(c) if c.name != name => c.name = name.to_string(),
+        _ => return,
+    }
+    open.execute_nonpixel(Box::new(SelectionEdit::new(
+        "Renomear canal",
+        before,
+        after,
+    )));
+    open.doc.modified = true;
+}
+
+/// Grava o resultado da edição de um canal pela máscara rápida.
+pub fn channel_store(open: &mut OpenDoc, id: u64, data: Vec<u8>) {
+    let before = SelectionState::of(&open.doc);
+    let mut after = before.clone();
+    match after.channels.iter_mut().find(|c| c.id == id) {
+        Some(c) if *c.mask != data => c.mask = Arc::new(data),
+        _ => return,
+    }
+    open.execute_nonpixel(Box::new(SelectionEdit::new("Editar canal", before, after)));
+    open.doc.modified = true;
+    open.doc.bump_view();
 }
 
 pub fn is_selection_tool(t: Tool) -> bool {
@@ -465,6 +535,7 @@ impl SelectState {
         self.transform_dialog(ctx, open);
         self.range_dialog(ctx, open);
         self.channels_dialog(ctx, open, fg);
+        self.refine_dialog(ctx, open);
     }
 
     pub fn open_range(&mut self, open: &mut OpenDoc, fg: [u8; 4]) {
@@ -488,6 +559,49 @@ impl SelectState {
                 scale_pct: 100.0,
                 angle: 0.0,
             });
+        }
+    }
+
+    fn refine_dialog(&mut self, ctx: &egui::Context, open: &mut OpenDoc) {
+        let Some((target, mut p)) = self.refine.take() else {
+            return;
+        };
+        let (mut apply, mut cancel) = (false, false);
+        egui::Window::new("Refinar borda")
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(match target {
+                    RefineTarget::Mask(_) => "Refina a máscara da camada ativa.",
+                    RefineTarget::Selection => "Refina a seleção atual.",
+                });
+                ui.add(egui::Slider::new(&mut p.smooth, 0..=40).text("Suavizar (px)"));
+                ui.add(egui::Slider::new(&mut p.shift, -50..=50).text("Deslocar borda (px)"));
+                ui.add(egui::Slider::new(&mut p.feather, 0.0..=60.0).text("Pena (px)"));
+                ui.add(egui::Slider::new(&mut p.contrast, 0.0..=1.0).text("Contraste"));
+                ui.small("Ordem: suavizar → deslocar → pena → contraste (algoritmos clássicos).");
+                ui.horizontal(|ui| {
+                    apply = ui.button("Aplicar").clicked();
+                    cancel = ui.button("Cancelar").clicked();
+                });
+            });
+        if apply {
+            let (w, h) = (open.doc.width, open.doc.height);
+            match target {
+                RefineTarget::Selection => {
+                    if let Some(m) = open.doc.selection.mask.clone() {
+                        let r = maskops::refine_edge(&m, w, h, &p);
+                        set_selection(open, "Refinar seleção", sel::nonempty(r));
+                    }
+                }
+                RefineTarget::Mask(id) => {
+                    if let Ok(layers) = maskops::refine_layer_mask(&open.doc, id, &p) {
+                        open.edit_layers("Refinar máscara", |ls| *ls = layers);
+                    }
+                }
+            }
+        } else if !cancel {
+            self.refine = Some((target, p));
         }
     }
 
@@ -1042,5 +1156,49 @@ mod tests {
         o.doc.selection = r.before.selection.clone();
         assert!(o.doc.selection.mask.is_none());
         assert_eq!(o.history.labels().len(), before_rev);
+    }
+    #[test]
+    fn channel_rename_store_delete_and_refine_selection() {
+        let mut o = open();
+        let mut s = SelectState::default();
+        drag(
+            &mut s,
+            Tool::Marquee,
+            &mut o,
+            &[[2.0, 2.0], [12.0, 12.0]],
+            false,
+            false,
+        );
+        s.channels_dialog_for_test(&mut o);
+        let id = o.doc.channels[0].id;
+        channel_rename(&mut o, id, "Céu");
+        assert_eq!(o.doc.channels[0].name, "Céu");
+        channel_rename(&mut o, id, "");
+        assert_eq!(o.doc.channels[0].name, "Céu");
+        channel_store(&mut o, id, vec![255; 40 * 30]);
+        assert!(o.doc.channels[0].mask.iter().all(|&v| v == 255));
+        channel_load(&mut o, 0, Combine::Replace);
+        assert_eq!(selected(&o), 40 * 30);
+        o.channel_view = Some(id);
+        channel_delete(&mut o, 0);
+        assert!(o.doc.channels.is_empty() && o.channel_view.is_none());
+        o.history.undo(&mut o.doc);
+        assert_eq!(o.doc.channels.len(), 1);
+        assert!(o.doc.modified);
+        // Refinar a seleção: deslocar a borda expande.
+        let m = sel::rect_mask(40, 30, (10.0, 10.0), (20.0, 20.0), true);
+        o.doc.selection = Selection::from_mask(Some(m.clone()));
+        let p = RefineParams {
+            shift: 2,
+            ..RefineParams::default()
+        };
+        let r = maskops::refine_edge(&m, 40, 30, &p);
+        assert!(set_selection(&mut o, "Refinar seleção", sel::nonempty(r)));
+        assert_eq!(
+            sel::bounds(o.doc.selection.mask.as_ref().unwrap(), 40, 30)
+                .unwrap()
+                .w,
+            14
+        );
     }
 }

@@ -6,6 +6,7 @@
 //! Alfa não pré-multiplicado; fórmulas de mesclagem em sRGB codificado (docs/COMPOSITING.md).
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::blend::{blend_rgb, dissolve_noise, BlendMode};
 use crate::document::{Document, Layer, LayerId, LayerKind};
@@ -16,6 +17,8 @@ use crate::geom::Rect;
 pub struct RenderOpts {
     /// Mostrar apenas esta camada (e seus ancestrais/descendentes): isolamento temporário.
     pub isolate: Option<LayerId>,
+    /// Mostrar a máscara desta camada em tons de cinza no lugar da imagem.
+    pub show_mask: Option<LayerId>,
 }
 
 /// Compõe as camadas visíveis em um buffer RGBA8 (sRGB, alfa não pré-multiplicado).
@@ -31,6 +34,23 @@ pub fn flatten_region(doc: &Document, region: Rect) -> Vec<u8> {
 pub fn flatten_region_with(doc: &Document, region: Rect, opts: RenderOpts) -> Vec<u8> {
     let r = region.clamp_to(doc.width, doc.height);
     let mut buf = vec![0u8; r.w as usize * r.h as usize * 4];
+    if let Some(mask) = opts
+        .show_mask
+        .and_then(|id| doc.layer(id))
+        .and_then(|l| l.mask.as_ref())
+    {
+        let eff = mask.effective(doc.width, doc.height);
+        if eff.len() == doc.width as usize * doc.height as usize {
+            for y in r.y..r.bottom() {
+                for x in r.x..r.right() {
+                    let v = eff[y as usize * doc.width as usize + x as usize];
+                    let i = ((y - r.y) as usize * r.w as usize + (x - r.x) as usize) * 4;
+                    buf[i..i + 4].copy_from_slice(&[v, v, v, 255]);
+                }
+            }
+            return buf;
+        }
+    }
     let show = opts.isolate.map(|id| isolation_set(doc, id));
     render_level(doc, None, r, &mut buf, show.as_ref());
     buf
@@ -49,6 +69,13 @@ fn isolation_set(doc: &Document, id: LayerId) -> HashSet<LayerId> {
     set
 }
 
+/// Máscara efetiva da camada, se houver, estiver ativa e combinar com o tamanho do documento.
+fn effective_mask(doc: &Document, layer: &Layer) -> Option<Arc<Vec<u8>>> {
+    let m = layer.mask.as_ref().filter(|m| m.enabled)?;
+    let e = m.effective(doc.width, doc.height);
+    (e.len() == doc.width as usize * doc.height as usize).then_some(e)
+}
+
 fn render_level(
     doc: &Document,
     parent: Option<LayerId>,
@@ -56,48 +83,184 @@ fn render_level(
     buf: &mut [u8],
     show: Option<&HashSet<LayerId>>,
 ) {
-    for layer in doc
-        .layers
-        .iter()
-        .filter(|l| l.parent == parent && l.visible)
-    {
-        if show.is_some_and(|s| !s.contains(&layer.id)) {
+    let kids: Vec<&Layer> = doc.layers.iter().filter(|l| l.parent == parent).collect();
+    let mut i = 0;
+    while i < kids.len() {
+        let base = kids[i];
+        i += 1;
+        // Camadas recortadas logo acima pertencem à cadeia desta base.
+        let mut chain: Vec<&Layer> = Vec::new();
+        while i < kids.len() && kids[i].clipped {
+            chain.push(kids[i]);
+            i += 1;
+        }
+        if !base.visible || show.is_some_and(|s| !s.contains(&base.id)) {
             continue;
         }
-        match layer.kind {
-            LayerKind::Raster => blend_raster(layer, r, buf),
-            LayerKind::Group => {
-                let pass = layer.blend == BlendMode::PassThrough;
-                if pass && layer.opacity >= 0.999 {
-                    render_level(doc, Some(layer.id), r, buf, show);
-                } else if pass {
-                    let mut copy = buf.to_vec();
-                    render_level(doc, Some(layer.id), r, &mut copy, show);
-                    for (dst, src) in buf
-                        .as_chunks_mut::<4>()
-                        .0
-                        .iter_mut()
-                        .zip(copy.as_chunks::<4>().0.iter())
-                    {
-                        let out = lerp_px(
-                            [dst[0], dst[1], dst[2], dst[3]],
-                            [src[0], src[1], src[2], src[3]],
-                            layer.opacity,
-                        );
-                        dst.copy_from_slice(&out);
-                    }
-                } else {
-                    let mut iso = vec![0u8; buf.len()];
-                    render_level(doc, Some(layer.id), r, &mut iso, show);
-                    blend_buffer(&iso, buf, r, layer.blend, layer.opacity * layer.fill);
+        if chain.is_empty() {
+            render_single(doc, base, r, buf, show);
+        } else {
+            render_clipped(doc, base, &chain, r, buf, show);
+        }
+    }
+}
+
+fn render_single(
+    doc: &Document,
+    layer: &Layer,
+    r: Rect,
+    buf: &mut [u8],
+    show: Option<&HashSet<LayerId>>,
+) {
+    let mask = effective_mask(doc, layer);
+    match layer.kind {
+        LayerKind::Raster => {
+            blend_raster(layer, r, buf, mask.as_deref().map(Vec::as_slice), doc.width)
+        }
+        LayerKind::Group => {
+            // Grupo com máscara não pode "passar através": é composto de forma isolada.
+            let pass = layer.blend == BlendMode::PassThrough && mask.is_none();
+            if pass && layer.opacity >= 0.999 {
+                render_level(doc, Some(layer.id), r, buf, show);
+            } else if pass {
+                let mut copy = buf.to_vec();
+                render_level(doc, Some(layer.id), r, &mut copy, show);
+                for (dst, src) in buf
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(copy.as_chunks::<4>().0.iter())
+                {
+                    let out = lerp_px(*dst, *src, layer.opacity);
+                    dst.copy_from_slice(&out);
                 }
+            } else {
+                let iso = group_buffer(doc, layer, r, show, mask.as_deref().map(Vec::as_slice));
+                let mode = if layer.blend == BlendMode::PassThrough {
+                    BlendMode::Normal
+                } else {
+                    layer.blend
+                };
+                blend_buffer(&iso, buf, r, mode, layer.opacity * layer.fill);
             }
         }
     }
 }
 
-/// Mescla uma camada raster no buffer da região.
-fn blend_raster(layer: &Layer, r: Rect, buf: &mut [u8]) {
+/// Conteúdo isolado de um grupo (com a máscara do grupo aplicada ao alfa).
+fn group_buffer(
+    doc: &Document,
+    g: &Layer,
+    r: Rect,
+    show: Option<&HashSet<LayerId>>,
+    mask: Option<&[u8]>,
+) -> Vec<u8> {
+    let mut iso = vec![0u8; r.w as usize * r.h as usize * 4];
+    render_level(doc, Some(g.id), r, &mut iso, show);
+    if let Some(m) = mask {
+        apply_mask_to_region(&mut iso, r, m, doc.width);
+    }
+    iso
+}
+
+fn apply_mask_to_region(buf: &mut [u8], r: Rect, mask: &[u8], doc_w: u32) {
+    let rw = r.w as usize;
+    for (i, px) in buf.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let (x, y) = (r.x as usize + i % rw, r.y as usize + i / rw);
+        let m = mask[y * doc_w as usize + x];
+        px[3] = ((u32::from(px[3]) * u32::from(m) + 127) / 255) as u8;
+    }
+}
+
+/// Base + camadas recortadas: a cadeia é composta sobre a base (o alfa da base manda) e o
+/// resultado é mesclado com o modo, opacidade e preenchimento da base.
+fn render_clipped(
+    doc: &Document,
+    base: &Layer,
+    chain: &[&Layer],
+    r: Rect,
+    buf: &mut [u8],
+    show: Option<&HashSet<LayerId>>,
+) {
+    let base_mask = effective_mask(doc, base);
+    let mut b = match base.kind {
+        LayerKind::Raster => {
+            let mut tmp = vec![0u8; r.w as usize * r.h as usize * 4];
+            let mut plain = base.clone();
+            plain.opacity = 1.0;
+            plain.fill = 1.0;
+            plain.blend = BlendMode::Normal;
+            blend_raster(
+                &plain,
+                r,
+                &mut tmp,
+                base_mask.as_deref().map(Vec::as_slice),
+                doc.width,
+            );
+            tmp
+        }
+        LayerKind::Group => {
+            group_buffer(doc, base, r, show, base_mask.as_deref().map(Vec::as_slice))
+        }
+    };
+    let rw = r.w as usize;
+    for c in chain {
+        if !c.visible || show.is_some_and(|s| !s.contains(&c.id)) {
+            continue;
+        }
+        let cmask = effective_mask(doc, c);
+        // Conteúdo da camada recortada (raster ou grupo isolado) com a sua máscara.
+        let src_buf = match c.kind {
+            LayerKind::Raster => {
+                let mut tmp = vec![0u8; r.w as usize * r.h as usize * 4];
+                let mut plain = (*c).clone();
+                plain.opacity = 1.0;
+                plain.fill = 1.0;
+                plain.blend = BlendMode::Normal;
+                blend_raster(
+                    &plain,
+                    r,
+                    &mut tmp,
+                    cmask.as_deref().map(Vec::as_slice),
+                    doc.width,
+                );
+                tmp
+            }
+            LayerKind::Group => group_buffer(doc, c, r, show, cmask.as_deref().map(Vec::as_slice)),
+        };
+        let scale = c.opacity * c.fill;
+        let mode = if c.blend == BlendMode::PassThrough {
+            BlendMode::Normal
+        } else {
+            c.blend
+        };
+        for (i, (dst, src)) in b
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(src_buf.as_chunks::<4>().0.iter())
+            .enumerate()
+        {
+            let ba = dst[3];
+            if ba == 0 || src[3] == 0 {
+                continue;
+            }
+            let (x, y) = (r.x + (i % rw) as u32, r.y + (i / rw) as u32);
+            let mut out = composite(*dst, *src, mode, scale * f32::from(ba) / 255.0, x, y);
+            out[3] = ba; // o alfa da base não muda
+            *dst = out;
+        }
+    }
+    let mode = if base.blend == BlendMode::PassThrough {
+        BlendMode::Normal
+    } else {
+        base.blend
+    };
+    blend_buffer(&b, buf, r, mode, base.opacity * base.fill);
+}
+
+/// Mescla uma camada raster no buffer da região (`mask`: máscara efetiva do tamanho do documento).
+fn blend_raster(layer: &Layer, r: Rect, buf: &mut [u8], mask: Option<&[u8]>, doc_w: u32) {
     let scale = layer.opacity * layer.fill;
     if scale <= 0.0 {
         return;
@@ -109,7 +272,7 @@ fn blend_raster(layer: &Layer, r: Rect, buf: &mut [u8]) {
         for x in r.x..x_end {
             let si = (y as usize * layer.width as usize + x as usize) * 4;
             let di = ((y - r.y) as usize * rw + (x - r.x) as usize) * 4;
-            let src = [
+            let mut src = [
                 layer.pixels[si],
                 layer.pixels[si + 1],
                 layer.pixels[si + 2],
@@ -118,13 +281,20 @@ fn blend_raster(layer: &Layer, r: Rect, buf: &mut [u8]) {
             if src[3] == 0 {
                 continue;
             }
+            if let Some(m) = mask {
+                let mv = u32::from(m[y as usize * doc_w as usize + x as usize]);
+                src[3] = ((u32::from(src[3]) * mv + 127) / 255) as u8;
+                if src[3] == 0 {
+                    continue;
+                }
+            }
             let dst = [buf[di], buf[di + 1], buf[di + 2], buf[di + 3]];
             buf[di..di + 4].copy_from_slice(&composite(dst, src, layer.blend, scale, x, y));
         }
     }
 }
 
-/// Mescla um buffer de região inteiro (grupo isolado) sobre `buf`.
+/// Mescla um buffer de região inteiro (grupo isolado, cadeia recortada) sobre `buf`.
 fn blend_buffer(src_buf: &[u8], buf: &mut [u8], r: Rect, mode: BlendMode, scale: f32) {
     let rw = r.w as usize;
     for (i, (dst, src)) in buf
@@ -139,14 +309,7 @@ fn blend_buffer(src_buf: &[u8], buf: &mut [u8], r: Rect, mode: BlendMode, scale:
         }
         let x = r.x + (i % rw) as u32;
         let y = r.y + (i / rw) as u32;
-        let out = composite(
-            [dst[0], dst[1], dst[2], dst[3]],
-            [src[0], src[1], src[2], src[3]],
-            mode,
-            scale,
-            x,
-            y,
-        );
+        let out = composite(*dst, *src, mode, scale, x, y);
         dst.copy_from_slice(&out);
     }
 }
@@ -428,6 +591,120 @@ mod tests {
         assert_eq!(pixel_at(&doc, 0, 0).unwrap(), [200, 0, 0, 255]);
     }
 
+    fn clip_doc() -> (Document, LayerId, LayerId) {
+        // Fundo cinza; base = quadrado vermelho opaco em (1..3, 1..3); clipada = tela azul cobrindo tudo.
+        let mut d = Document::new("t", 6, 6, Some([100, 100, 100, 255])).unwrap();
+        let mut base = Layer::transparent("base", 6, 6);
+        for y in 1..3 {
+            for x in 1..3 {
+                base.set_pixel(x, y, [200, 0, 0, 255]);
+            }
+        }
+        let mut clip = Layer::filled("clip", 6, 6, [0, 0, 200, 255]);
+        clip.clipped = true;
+        let ids = (base.id, clip.id);
+        d.layers.extend([base, clip]);
+        (d, ids.0, ids.1)
+    }
+
+    #[test]
+    fn clipped_layer_shows_only_where_base_has_alpha() {
+        let (d, _, _) = clip_doc();
+        assert_eq!(pixel_at(&d, 1, 1), Some([0, 0, 200, 255]), "dentro da base");
+        assert_eq!(
+            pixel_at(&d, 4, 4),
+            Some([100, 100, 100, 255]),
+            "fora da base: só o fundo"
+        );
+        // Sem recorte a tela azul cobre tudo.
+        let mut free = d.clone();
+        free.layers[2].clipped = false;
+        assert_eq!(pixel_at(&free, 4, 4), Some([0, 0, 200, 255]));
+    }
+
+    #[test]
+    fn clipping_chain_uses_base_opacity_hides_with_base_and_keeps_alpha() {
+        let (mut d, base, _) = clip_doc();
+        let mut third = Layer::filled("c2", 6, 6, [0, 200, 0, 255]);
+        third.clipped = true;
+        third.opacity = 0.5;
+        d.layers.push(third);
+        // Segunda clipada meio transparente sobre a primeira: mistura de azul e verde.
+        let p = pixel_at(&d, 1, 1).unwrap();
+        assert!(p[1] > 90 && p[1] < 110 && p[2] > 90 && p[2] < 110, "{p:?}");
+        assert_eq!(pixel_at(&d, 4, 4), Some([100, 100, 100, 255]));
+        // Opacidade da base vale para a cadeia inteira.
+        d.layer_mut(base).unwrap().opacity = 0.5;
+        let p = pixel_at(&d, 1, 1).unwrap();
+        assert!(
+            p[0] > 40 && p[0] < 70,
+            "metade do fundo cinza aparece: {p:?}"
+        );
+        // Ocultar a base oculta a cadeia.
+        d.layer_mut(base).unwrap().visible = false;
+        assert_eq!(pixel_at(&d, 1, 1), Some([100, 100, 100, 255]));
+    }
+
+    #[test]
+    fn clipped_layer_keeps_its_own_blend_mode_and_mask() {
+        let (mut d, _, clip) = clip_doc();
+        d.layer_mut(clip).unwrap().blend = BlendMode::Multiply;
+        // Multiplicar azul (0,0,200) por vermelho (200,0,0) dentro da base = preto.
+        assert_eq!(pixel_at(&d, 1, 1), Some([0, 0, 0, 255]));
+        d.layer_mut(clip).unwrap().blend = BlendMode::Normal;
+        // Máscara da camada recortada esconde metade da base.
+        let mut m = vec![255u8; 36];
+        for y in 0..6 {
+            m[y * 6 + 1] = 0;
+        }
+        d.layer_mut(clip).unwrap().mask = Some(crate::LayerMask::new(m));
+        assert_eq!(
+            pixel_at(&d, 1, 1),
+            Some([200, 0, 0, 255]),
+            "máscara revela a base"
+        );
+        assert_eq!(pixel_at(&d, 2, 1), Some([0, 0, 200, 255]));
+    }
+
+    #[test]
+    fn clipping_to_a_group_and_with_a_masked_base() {
+        let mut d = Document::new("t", 4, 4, Some([50, 50, 50, 255])).unwrap();
+        let g = Layer::group("G");
+        let gid = g.id;
+        d.layers.push(g);
+        let mut child = Layer::transparent("c", 4, 4);
+        child.set_pixel(1, 1, [255, 255, 255, 255]);
+        child.parent = Some(gid);
+        d.layers.push(child);
+        let mut clip = Layer::filled("clip", 4, 4, [0, 255, 0, 255]);
+        clip.clipped = true;
+        d.layers.push(clip);
+        assert_eq!(pixel_at(&d, 1, 1), Some([0, 255, 0, 255]));
+        assert_eq!(pixel_at(&d, 3, 3), Some([50, 50, 50, 255]));
+        // Base com máscara escondendo o pixel: a cadeia some junto.
+        let mut m = vec![255u8; 16];
+        m[4 + 1] = 0;
+        d.layer_mut(gid).unwrap().mask = Some(crate::LayerMask::new(m));
+        assert_eq!(pixel_at(&d, 1, 1), Some([50, 50, 50, 255]));
+    }
+
+    #[test]
+    fn mask_isolated_view_shows_grayscale_mask() {
+        let mut d = Document::new("t", 2, 1, Some([9, 9, 9, 255])).unwrap();
+        d.layers[0].mask = Some(crate::LayerMask::new(vec![40, 220]));
+        let id = d.layers[0].id;
+        let v = flatten_region_with(
+            &d,
+            Rect::full(2, 1),
+            RenderOpts {
+                show_mask: Some(id),
+                ..Default::default()
+            },
+        );
+        assert_eq!(v, vec![40, 40, 40, 255, 220, 220, 220, 255]);
+        assert_ne!(flatten(&d), v);
+    }
+
     #[test]
     fn isolation_shows_only_chosen_layer_chain() {
         let mut doc = Document::new("t", 2, 2, Some([10, 10, 10, 255])).unwrap();
@@ -439,10 +716,18 @@ mod tests {
             Rect::full(2, 2),
             RenderOpts {
                 isolate: Some(doc.layers[0].id),
+                ..Default::default()
             },
         );
         assert_eq!(&only[0..4], &[10, 10, 10, 255]);
-        let only = flatten_region_with(&doc, Rect::full(2, 2), RenderOpts { isolate: Some(id) });
+        let only = flatten_region_with(
+            &doc,
+            Rect::full(2, 2),
+            RenderOpts {
+                isolate: Some(id),
+                ..Default::default()
+            },
+        );
         assert_eq!(&only[0..4], &[200, 0, 0, 255]);
     }
 }

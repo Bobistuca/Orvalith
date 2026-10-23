@@ -16,4 +16,8 @@
 - A prévia de transformação reprocessa a camada inteira a cada ajuste (bicúbica em 4K pode levar segundos); o trabalho é paralelizado por linhas mas roda na thread da interface.
 - Malha de deformação: bordas externas sem suavização; os pontos de controle são fixos em 4×4.
 - Réguas desaparecem enquanto a visão está girada; o Mover não encaixa em guias.
+- Máscaras vetoriais não existem (dependem do Estágio 8); a máscara de grupo não acompanha o conteúdo ao mover o grupo.
+- A pena da máscara é um desfoque da tela inteira (cache por camada), pesado em documentos grandes na primeira exibição após alterar.
+- Recorte (clipping): em pixels com alfa parcial na base o resultado é aproximado e pode diferir de outros editores.
+- O painel de camadas ficou longo (propriedades, máscara, lista, canais) e não foi exercitado com mouse.
 - Nenhum outro registrado. Limitações do estágio atual estão em [[docs/FEATURE_MATRIX]].

@@ -5,7 +5,7 @@
 //! é a ordem relativa na lista; a posição do grupo define onde o grupo entra entre os irmãos.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::blend::BlendMode;
 
@@ -41,6 +41,101 @@ pub enum LayerKind {
     Group,
 }
 
+/// Máscara de camada: 1 byte por pixel do documento (255 = visível, 0 = oculto).
+///
+/// A máscara efetiva (com densidade e pena) é calculada sob demanda e guardada em cache;
+/// qualquer alteração dos dados ou dos parâmetros invalida o cache.
+#[derive(Debug, Clone)]
+pub struct LayerMask {
+    data: Arc<Vec<u8>>,
+    pub enabled: bool,
+    /// Vinculada: mover/transformar a camada move/transforma a máscara junto.
+    pub linked: bool,
+    density: f32,
+    feather: f32,
+    cache: Arc<OnceLock<Arc<Vec<u8>>>>,
+}
+
+impl LayerMask {
+    pub fn new(data: Vec<u8>) -> Self {
+        Self {
+            data: Arc::new(data),
+            enabled: true,
+            linked: true,
+            density: 1.0,
+            feather: 0.0,
+            cache: Arc::new(OnceLock::new()),
+        }
+    }
+
+    fn reset_cache(&mut self) {
+        self.cache = Arc::new(OnceLock::new());
+    }
+
+    /// Dados pintados (sem densidade/pena).
+    pub fn data(&self) -> &Arc<Vec<u8>> {
+        &self.data
+    }
+
+    pub fn set_data(&mut self, data: Arc<Vec<u8>>) {
+        self.data = data;
+        self.reset_cache();
+    }
+
+    pub fn data_mut(&mut self) -> &mut Vec<u8> {
+        self.reset_cache();
+        Arc::make_mut(&mut self.data)
+    }
+
+    pub fn density(&self) -> f32 {
+        self.density
+    }
+
+    pub fn set_density(&mut self, d: f32) {
+        self.density = if d.is_finite() {
+            d.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        self.reset_cache();
+    }
+
+    pub fn feather(&self) -> f32 {
+        self.feather
+    }
+
+    pub fn set_feather(&mut self, f: f32) {
+        self.feather = if f.is_finite() {
+            f.clamp(0.0, 250.0)
+        } else {
+            0.0
+        };
+        self.reset_cache();
+    }
+
+    /// Máscara efetiva: pena (desfoque) e depois densidade (`255 - (255 - m) * densidade`).
+    pub fn effective(&self, w: u32, h: u32) -> Arc<Vec<u8>> {
+        self.cache
+            .get_or_init(|| {
+                if self.feather <= 0.0 && self.density >= 1.0 {
+                    return self.data.clone();
+                }
+                let mut m = if self.feather > 0.0 {
+                    crate::selection::blur_mask(&self.data, w, h, self.feather)
+                } else {
+                    self.data.as_ref().clone()
+                };
+                if self.density < 1.0 {
+                    for v in &mut m {
+                        *v = (255.0 - (255.0 - f32::from(*v)) * self.density).round() as u8;
+                    }
+                }
+                Arc::new(m)
+            })
+            .clone()
+    }
+}
+
 /// Camada raster RGBA8 (sRGB, alfa não pré-multiplicado) ou grupo (sem pixels).
 ///
 /// `pixels` é compartilhado (`Arc`): clonar uma camada é barato e a escrita copia o buffer
@@ -61,6 +156,10 @@ pub struct Layer {
     pub lock_position: bool,
     /// Grupo expandido no painel.
     pub expanded: bool,
+    /// Máscara de camada (raster ou grupo).
+    pub mask: Option<LayerMask>,
+    /// Recortada na camada abaixo (máscara de recorte / clipping).
+    pub clipped: bool,
     pub width: u32,
     pub height: u32,
     pub pixels: Arc<Vec<u8>>,
@@ -98,6 +197,8 @@ impl Layer {
             lock_alpha: false,
             lock_position: false,
             expanded: true,
+            mask: None,
+            clipped: false,
             width,
             height,
             pixels: Arc::new(pixels),

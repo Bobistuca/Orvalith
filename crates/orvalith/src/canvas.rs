@@ -41,6 +41,18 @@ pub struct OpenDoc {
     pub thumbs_rev: u64,
     /// Renomeação em andamento no painel.
     pub renaming: Option<(LayerId, String)>,
+    /// A pintura vai para a máscara da camada ativa (em vez dos pixels).
+    pub edit_mask: bool,
+    /// Mostrar a máscara desta camada em cinza (visão isolada).
+    pub mask_view: Option<LayerId>,
+    /// Mostrar este canal salvo em cinza.
+    pub channel_view: Option<u64>,
+    /// Canais de cor visíveis (R, G, B): só afeta a visualização.
+    pub view_channels: [bool; 3],
+    /// Canal salvo sendo editado pela máscara rápida (None = edita a seleção).
+    pub qm_target: Option<u64>,
+    pub mask_thumbs: HashMap<LayerId, egui::TextureHandle>,
+    pub renaming_channel: Option<(u64, String)>,
     /// Máscara rápida: um documento cinza (255 = selecionado) editado com as ferramentas de pintura.
     pub qm: Option<Box<OpenDoc>>,
     sel_edges: Option<(usize, Vec<[f32; 4]>)>,
@@ -76,6 +88,13 @@ impl OpenDoc {
             thumbs: HashMap::new(),
             thumbs_rev: 0,
             renaming: None,
+            edit_mask: false,
+            mask_view: None,
+            channel_view: None,
+            view_channels: [true; 3],
+            qm_target: None,
+            mask_thumbs: HashMap::new(),
+            renaming_channel: None,
             qm: None,
             sel_edges: None,
             guide_drag: None,
@@ -132,6 +151,47 @@ impl OpenDoc {
         if let Ok(mut d) = Document::new("Máscara rápida", w, h, None) {
             d.layers[0] = Layer::from_pixels("Máscara", w, h, px);
             self.qm = Some(Box::new(OpenDoc::new(d)));
+        }
+    }
+
+    /// Entra na máscara rápida editando um canal salvo.
+    pub fn enter_quick_mask_for_channel(&mut self, id: u64) {
+        let Some(c) = self.doc.channels.iter().find(|c| c.id == id) else {
+            return;
+        };
+        let (w, h) = (self.doc.width, self.doc.height);
+        let mut px = Vec::with_capacity(w as usize * h as usize * 4);
+        for &v in c.mask.iter() {
+            px.extend_from_slice(&[v, v, v, 255]);
+        }
+        if let Ok(mut d) = Document::new("Canal", w, h, None) {
+            d.layers[0] = Layer::from_pixels("Canal", w, h, px);
+            self.qm = Some(Box::new(OpenDoc::new(d)));
+            self.qm_target = Some(id);
+        }
+    }
+
+    /// Sai da máscara rápida e devolve o mapa bruto de 1 byte por pixel.
+    pub fn leave_quick_mask_raw(&mut self) -> Option<Vec<u8>> {
+        let qm = self.qm.take()?;
+        Some(
+            qm.doc.layers[0]
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|p| p[0])
+                .collect(),
+        )
+    }
+
+    /// Registra um comando já aplicado, com atualização parcial da textura em `rect`.
+    pub fn record_cmd(&mut self, cmd: Box<dyn orvalith_core::Command>, rect: PixRect) {
+        let partial_ok = self.tracked_rev == self.doc.revision;
+        self.history.record(&mut self.doc, cmd);
+        if partial_ok {
+            self.dirty = Some(self.dirty.map_or(rect, |d| d.union(rect)));
+            self.tracked_rev = self.doc.revision;
         }
     }
 
@@ -939,10 +999,55 @@ fn sync_texture(
 }
 
 fn render_composite(o: &OpenDoc, r: PixRect) -> Vec<u8> {
+    // Visão isolada de um canal salvo (cinza).
+    if let Some(c) = o
+        .channel_view
+        .and_then(|id| o.doc.channels.iter().find(|c| c.id == id))
+    {
+        let (w, rr) = (o.doc.width as usize, r.clamp_to(o.doc.width, o.doc.height));
+        let mut out = Vec::with_capacity(rr.w as usize * rr.h as usize * 4);
+        for y in rr.y..rr.bottom() {
+            for x in rr.x..rr.right() {
+                let v = c
+                    .mask
+                    .get(y as usize * w + x as usize)
+                    .copied()
+                    .unwrap_or(0);
+                out.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        return out;
+    }
     let opts = RenderOpts {
         isolate: o.isolated,
+        show_mask: o.mask_view,
     };
-    compose::flatten_region_with(&o.doc, r, opts)
+    let mut px = compose::flatten_region_with(&o.doc, r, opts);
+    apply_channel_view(&mut px, o.view_channels);
+    px
+}
+
+/// Mostra só os canais de cor escolhidos: um canal = tons de cinza; vários = os demais zerados.
+pub fn apply_channel_view(rgba: &mut [u8], ch: [bool; 3]) {
+    let on = ch.iter().filter(|&&c| c).count();
+    if on == 3 {
+        return;
+    }
+    for p in rgba.as_chunks_mut::<4>().0 {
+        if on == 1 {
+            let i = ch.iter().position(|&c| c).unwrap_or(0);
+            let v = p[i];
+            p[0] = v;
+            p[1] = v;
+            p[2] = v;
+        } else {
+            for (c, &show) in ch.iter().enumerate() {
+                if !show {
+                    p[c] = 0;
+                }
+            }
+        }
+    }
 }
 
 /// Sobreposição vermelha (50%) sobre as áreas NÃO selecionadas da máscara rápida.
@@ -1101,5 +1206,23 @@ fn draw_shape(painter: &egui::Painter, shape: &Shape, view: &View, rect: Rect, p
     };
     if pts.len() >= 2 {
         ants(painter, &pts, phase);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_view_shows_gray_of_one_channel_or_zeroes_others() {
+        let mut px = vec![10, 20, 30, 255, 200, 100, 50, 128];
+        apply_channel_view(&mut px, [true, true, true]);
+        assert_eq!(px, vec![10, 20, 30, 255, 200, 100, 50, 128]);
+        let mut g = px.clone();
+        apply_channel_view(&mut g, [false, true, false]);
+        assert_eq!(g, vec![20, 20, 20, 255, 100, 100, 100, 128]);
+        let mut rb = px.clone();
+        apply_channel_view(&mut rb, [true, false, true]);
+        assert_eq!(rb, vec![10, 0, 30, 255, 200, 0, 50, 128]);
     }
 }

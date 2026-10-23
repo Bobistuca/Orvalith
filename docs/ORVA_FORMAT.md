@@ -3,14 +3,14 @@ type: formato
 status: ativo
 tags: [orvalith, formato]
 ---
-# Formato de projeto `.orva` (versão atual: 4; lê 1 a 4)
+# Formato de projeto `.orva` (versão atual: 5; lê 1 a 5)
 
 Implementação: [orva.rs](../crates/orvalith-core/src/orva.rs). Decisão: [[docs/decisions/0002-orva-container]].
 
 | Offset | Tamanho | Conteúdo |
 |---|---|---|
 | 0 | 8 | Magic `ORVALITH` |
-| 8 | 4 | Versão do formato (u32 LE) — atual: 4 |
+| 8 | 4 | Versão do formato (u32 LE) — atual: 5 |
 | 12 | 4 | Tamanho do manifesto em bytes (u32 LE) |
 | 16 | 4 | CRC32 do manifesto (u32 LE) |
 | 20 | N | Manifesto JSON UTF-8 |
@@ -27,6 +27,9 @@ Cada entrada de `layers[]` ganha: `kind` (`raster`/`group`), `parent` (ID do gru
 
 ## Versão 4 (Estágio 6)
 `guides[]` no manifesto: guias de régua (`vertical`, `pos` em pixels do documento, finito). Valores inválidos são descartados na leitura (máx. 10 000).
+
+## Versão 5 (Estágio 7)
+Cada camada ganha `clipped` (recortada na camada abaixo) e `mask` opcional: `offset`/`stored_len`/`raw_len`/`crc32` de um recurso zlib de 1 byte por pixel do documento, mais `enabled`, `linked`, `density` (0..1) e `feather` (px). `raw_len` deve ser `largura × altura` do documento; a leitura valida tamanho, limites, CRC e conta a memória no limite de 2 GiB. Máscaras de grupo são aceitas.
 
 ## Evolução
 Campos desconhecidos no manifesto são ignorados; mudanças incompatíveis incrementam a versão. Um leitor recusa versões maiores que a sua com mensagem clara. Camadas futuras (grupos, máscaras, texto…) entrarão como novos campos/recursos no manifesto.

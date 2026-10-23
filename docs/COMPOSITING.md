@@ -23,6 +23,15 @@ Testes: valores conhecidos por modo, identidades (multiplicar por branco etc.), 
 - **Qualquer outro modo** (inclui Normal): o grupo é composto isoladamente sobre transparência e depois mesclado como uma camada única, com o modo, a opacidade e o preenchimento do grupo.
 - Grupo oculto oculta os filhos. Grupos aninhados são compostos de dentro para fora.
 
+## Máscaras de camada
+- Máscara efetiva = pena (desfoque gaussiano aproximado) e depois densidade (`255 - (255 - m) × densidade`), calculada sob demanda e guardada em cache; só vale se estiver ativa.
+- O alfa de origem de cada pixel é multiplicado pela máscara antes de qualquer modo de mesclagem. Os pixels da camada nunca são alterados até **Aplicar**.
+- Grupos com máscara são compostos de forma isolada (não "passam através").
+
+## Máscaras de recorte (clipping)
+- Uma camada com `clipped` pertence à cadeia da camada não recortada logo abaixo (irmãs). A base é composta sozinha, em modo Normal e sem opacidade; cada camada recortada é mesclada sobre a base com seu modo, opacidade, preenchimento e máscara, com alfa de origem multiplicado pelo alfa da base; o **alfa da base é preservado** (aproximação nos pixels de alfa parcial). O resultado da cadeia é então mesclado com o modo, opacidade e preenchimento da **base**.
+- Ocultar a base oculta toda a cadeia; uma camada recortada sem base abaixo se comporta como camada normal. Bases podem ser grupos e podem ter máscara.
+
 ## Opacidade × preenchimento
 Hoje ambos multiplicam o alfa da camada, então o resultado é idêntico. A diferença (estilos de camada não são afetados pelo preenchimento) só passa a existir no Estágio 11.
 

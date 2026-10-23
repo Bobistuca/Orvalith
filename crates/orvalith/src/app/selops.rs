@@ -18,6 +18,7 @@ pub enum SelCmd {
     Range,
     Channels,
     QuickMask,
+    Refine,
 }
 
 impl OrvalithApp {
@@ -72,6 +73,16 @@ impl OrvalithApp {
                 self.tools.sel.open_range(open, fg);
             }
             SelCmd::Channels => self.tools.sel.channels_open = true,
+            SelCmd::Refine => {
+                if open.doc.selection.mask.is_some() {
+                    self.tools.sel.refine = Some((
+                        crate::select::RefineTarget::Selection,
+                        orvalith_core::maskops::RefineParams::default(),
+                    ));
+                } else {
+                    self.notice("Faça uma seleção primeiro.");
+                }
+            }
             SelCmd::QuickMask => {}
         }
     }
@@ -193,7 +204,11 @@ impl OrvalithApp {
             return;
         }
         if open.qm.is_some() {
-            if let Some(result) = open.leave_quick_mask() {
+            if let Some(id) = open.qm_target.take() {
+                if let Some(raw) = open.leave_quick_mask_raw() {
+                    select::channel_store(open, id, raw);
+                }
+            } else if let Some(result) = open.leave_quick_mask() {
                 select::set_selection(open, "Máscara rápida", result);
             }
             self.notice("Saiu da máscara rápida.");
@@ -209,18 +224,13 @@ impl OrvalithApp {
     }
 }
 
-/// Converte uma cor para cinza (luminância) mantendo o alfa.
-pub fn gray(c: [u8; 4]) -> [u8; 4] {
-    let l = (0.3 * f32::from(c[0]) + 0.59 * f32::from(c[1]) + 0.11 * f32::from(c[2])).round() as u8;
-    [l, l, l, c[3]]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::canvas::{CanvasOut, OpenDoc};
     use crate::prefs::Prefs;
+    use crate::tools::gray;
     use orvalith_core::Document;
 
     fn app_with_selection() -> OrvalithApp {
@@ -373,5 +383,54 @@ mod tests {
         assert_eq!(gray([0, 0, 0, 255]), [0, 0, 0, 255]);
         let g = gray([255, 0, 0, 255]);
         assert_eq!(g, [77, 77, 77, 255]);
+    }
+    #[test]
+    fn channel_edited_in_quick_mask_is_stored_with_undo() {
+        let mut app = app_with_selection();
+        // Salva a seleção como canal e edita esse canal na máscara rápida.
+        let mask = app.docs[0].doc.selection.mask.clone().unwrap();
+        let before = orvalith_core::edit::SelectionState::of(&app.docs[0].doc);
+        let mut after = before.clone();
+        after.channels.push(orvalith_core::Channel {
+            id: 1,
+            name: "Céu".into(),
+            mask,
+        });
+        app.docs[0].execute_nonpixel(Box::new(orvalith_core::edit::SelectionEdit::new(
+            "Salvar seleção",
+            before,
+            after,
+        )));
+        app.docs[0].enter_quick_mask_for_channel(1);
+        app.tools.tool = Tool::Pencil;
+        app.tools.brush.size = 1.0;
+        let (fg, bg) = (app.tools.fg, app.tools.bg);
+        app.tools.fg = gray([255, 255, 255, 255]);
+        let out = CanvasOut {
+            pressed: Some([15.5, 15.5]),
+            released: true,
+            pressure: 1.0,
+            ..Default::default()
+        };
+        let qm = app.docs[0].qm.as_deref_mut().unwrap();
+        app.tools.handle(qm, &out);
+        app.tools.fg = fg;
+        app.tools.bg = bg;
+        app.toggle_quick_mask();
+        assert!(app.docs[0].qm.is_none() && app.docs[0].qm_target.is_none());
+        assert_eq!(
+            app.docs[0].doc.channels[0].mask[15 * 20 + 15],
+            255,
+            "canal ganhou o pixel branco"
+        );
+        assert_eq!(app.docs[0].doc.channels[0].mask[2 * 20 + 2], 0);
+        // A seleção atual não foi tocada.
+        assert_eq!(
+            app.docs[0].doc.selection.mask.as_ref().unwrap()[15 * 20 + 15],
+            0
+        );
+        let o = &mut app.docs[0];
+        o.history.undo(&mut o.doc);
+        assert_eq!(o.doc.channels[0].mask[15 * 20 + 15], 0);
     }
 }

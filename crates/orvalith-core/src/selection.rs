@@ -364,6 +364,41 @@ fn gaussian_like(mask: &[u8], w: u32, h: u32, sigma: f32) -> Vec<u8> {
     m
 }
 
+/// Desfoque gaussiano aproximado de uma máscara (raio em pixels), sem normalizar para `Option`.
+pub fn blur_mask(mask: &[u8], w: u32, h: u32, radius: f32) -> Vec<u8> {
+    if radius <= 0.0 {
+        return mask.to_vec();
+    }
+    gaussian_like(mask, w, h, (radius / 2.0).min(100.0))
+}
+
+/// Desloca uma máscara por inteiros preenchendo o vazio com `fill`.
+pub fn shift_mask(mask: &[u8], w: u32, h: u32, dx: i32, dy: i32, fill: u8) -> Vec<u8> {
+    let (wi, hi) = (i64::from(w), i64::from(h));
+    let mut out = vec![fill; mask.len()];
+    for y in 0..hi {
+        let ty = y + i64::from(dy);
+        if ty < 0 || ty >= hi {
+            continue;
+        }
+        let x0 = i64::from(dx).max(0);
+        let x1 = (wi + i64::from(dx)).min(wi);
+        if x0 >= x1 {
+            continue;
+        }
+        let len = (x1 - x0) as usize;
+        let s = (y * wi + x0 - i64::from(dx)) as usize;
+        let d = (ty * wi + x0) as usize;
+        out[d..d + len].copy_from_slice(&mask[s..s + len]);
+    }
+    out
+}
+
+/// Dilatação/erosão (sem normalizar para `Option`): `grow` expande, senão contrai.
+pub fn morph_mask(mask: &[u8], w: u32, h: u32, r: u32, grow: bool) -> Vec<u8> {
+    morph(mask, w, h, r, grow)
+}
+
 /// Pena: suaviza a borda numa transição de aproximadamente `radius` pixels.
 pub fn feather(mask: &[u8], w: u32, h: u32, radius: f32) -> Option<Vec<u8>> {
     if radius <= 0.0 {

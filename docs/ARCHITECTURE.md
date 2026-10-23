@@ -33,5 +33,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Geometria (Estágio 6)
 [transform.rs](../crates/orvalith-core/src/transform.rs): `Affine`, `Homography`, amostragem (vizinho/bilinear/bicúbica) em alfa pré-multiplicado, `warp*` (paralelo por linhas) e `resample` separável com filtro alargado ao reduzir. [docops.rs](../crates/orvalith-core/src/docops.rs): `DocState`/`DocEdit` (estado geométrico inteiro, pixels por `Arc`), recorte, tela, imagem, orientação, endireitar, alinhar/distribuir. [snap.rs](../crates/orvalith-core/src/snap.rs) e rotação em [view.rs](../crates/orvalith-core/src/view.rs). UI: [geometry.rs](../crates/orvalith/src/geometry.rs) (sessão de transformação com prévia viva, ferramenta de recorte, diálogos) e [canvas.rs](../crates/orvalith/src/canvas.rs) (réguas, guias, grade, malha de textura girável).
 
+## Máscaras e canais (Estágio 7)
+`Layer.mask: Option<LayerMask>` ([document.rs](../crates/orvalith-core/src/document.rs)) com cache da máscara efetiva; [maskops.rs](../crates/orvalith-core/src/maskops.rs) (criar/aplicar/inverter/refinar, funções puras) e `edit::MaskPatch` (pintura na máscara com desfazer). A pintura na máscara reaproveita o motor de traço: uma camada-sombra cinza recebe as ferramentas e cada etapa é copiada de volta para a máscara real (prévia ao vivo); o fim do gesto vira um `MaskPatch`. A composição (`compose.rs`) trata cadeias de recorte e máscaras. O painel de canais usa a máscara rápida (`qm_target`) para editar canais salvos.
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

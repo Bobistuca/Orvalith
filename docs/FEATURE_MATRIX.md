@@ -78,4 +78,13 @@ tags: [orvalith, matriz]
 | Réguas (px/pol/cm), guias (criar arrastando, mover, remover), grade, encaixe | 6 | partial | `snap.rs`, `docops.rs` testes; guias persistem no `.orva` v4 | uso com mouse não exercitado; régua some com a visão girada; Mover não encaixa |
 | Rotação da visão (±15°, redefinir) sem alterar a imagem | 6 | partial | `view.rs` testes (ida e volta, âncora, pan) | desenho girado não exercitado visualmente |
 | Estágio 6 depende de camadas do tamanho da tela | 6 | partial | — | transformações são destrutivas e recortadas à tela; deslocamento por camada e objetos inteligentes ficam para o Estágio 11 |
+| Máscaras de camada raster (e de grupo): criar (revelar/ocultar/da seleção/seleção invertida), pintar, inverter, ativar, aplicar, excluir | 7 | partial | `maskops.rs` (composição, pixels preservados, aplicar = mesmo resultado), `tools.rs` (pincel, lápis, borracha, balde, gradiente na máscara; 1 ação), `layers_ui.rs` | uso com mouse/painel não exercitado; máscara é do tamanho da tela |
+| Vincular/desvincular máscara e camada ao mover/transformar/alinhar | 7 | partial | testes em `docops.rs`, `tools.rs`, `geometry.rs` | grupos: a máscara do grupo não acompanha o conteúdo ao mover |
+| Densidade e pena da máscara (efetivas, em cache) e visão isolada da máscara | 7 | partial | `maskops.rs`, `compose.rs` testes; arrasto = 1 ação | pena por desfoque gaussiano aproximado em toda a tela |
+| Máscara → seleção; seleção → máscara | 7 | partial | `maskops.rs`, `layers_ui.rs` testes | — |
+| Máscaras de recorte (clipping) em cadeia, com modo/opacidade/máscara próprios e base com máscara ou grupo | 7 | partial | `compose.rs`: alfa da base manda, opacidade da base vale para a cadeia, ocultar base oculta a cadeia, grupos | diferenças de referência no alfa parcial (aproximação); ver [[docs/COMPOSITING]] |
+| Painel de canais: visualizar R/G/B (cinza ou combinado), canais alfa salvos (ver, selecionar, renomear, excluir, editar na máscara rápida) | 7 | partial | `canvas.rs`, `select.rs`, `selops.rs` testes | só RGB 8 bits; sem CMYK/Lab/canais de cor por camada |
+| Refinar borda (suavizar, deslocar, pena, contraste) para máscara e seleção | 7 | partial | `maskops.rs` testes | algoritmos clássicos simples; sem detecção de cabelo/raio inteligente (fora do escopo, sem IA) |
+| Máscaras vetoriais | 7 | blocked | — | dependem dos caminhos (Estágio 8) |
+| `.orva` v5: máscaras e recorte persistem | 7 | partial | `orva.rs` teste de ida e volta + corrupção | ver [[docs/ORVA_FORMAT]] |
 | Demais estágios (5–16) | 5–16 | planned | — | ver [[ROADMAP]] |

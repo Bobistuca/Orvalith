@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use orvalith_core::edit::PixelPatch;
+use orvalith_core::edit::{MaskPatch, PixelPatch};
 use orvalith_core::fill::{bucket_fill, Gradient, GradientKind};
 use orvalith_core::geom::Rect;
 use orvalith_core::layerops;
@@ -118,6 +118,15 @@ enum Active {
         start: (f32, f32),
         delta: (i32, i32),
     },
+    /// Pintura na máscara da camada: uma camada-sombra cinza recebe as ferramentas.
+    MaskEdit {
+        doc: DocumentId,
+        layer: LayerId,
+        temp: Box<Layer>,
+        original: Arc<Vec<u8>>,
+        stroke: Option<Box<StrokeSession>>,
+        grad_start: Option<(f32, f32)>,
+    },
 }
 
 pub struct ToolState {
@@ -159,6 +168,12 @@ const PALETTE: [[u8; 4]; 16] = [
     [120, 80, 50, 255],
     [30, 40, 60, 255],
 ];
+
+/// Converte uma cor para cinza (luminância) mantendo o alfa.
+pub fn gray(c: [u8; 4]) -> [u8; 4] {
+    let l = (0.3 * f32::from(c[0]) + 0.59 * f32::from(c[1]) + 0.11 * f32::from(c[2])).round() as u8;
+    [l, l, l, c[3]]
+}
 
 /// Motivo pelo qual a camada não pode receber pintura, se houver.
 pub(crate) fn paint_blocked(l: &Layer) -> Option<String> {
@@ -300,6 +315,19 @@ impl ToolState {
                 let r = Rect::full(open.doc.width, open.doc.height);
                 open.mark_dirty(r);
             }
+            Some(Active::MaskEdit {
+                layer, original, ..
+            }) => {
+                // Restaura a máscara a partir do instantâneo gerado no início do gesto.
+                if let Some(m) = open.doc.layer_mut(layer).and_then(|l| l.mask.as_mut()) {
+                    let orig: Vec<u8> = original.as_chunks::<4>().0.iter().map(|p| p[0]).collect();
+                    if orig.len() == m.data().len() {
+                        m.set_data(Arc::new(orig));
+                    }
+                }
+                let r = Rect::full(open.doc.width, open.doc.height);
+                open.mark_dirty(r);
+            }
             other => self.active = other,
         }
     }
@@ -322,7 +350,8 @@ impl ToolState {
         let foreign = match &self.active {
             Some(Active::Stroke { doc, .. })
             | Some(Active::Gradient { doc, .. })
-            | Some(Active::Move { doc, .. }) => *doc != doc_id,
+            | Some(Active::Move { doc, .. })
+            | Some(Active::MaskEdit { doc, .. }) => *doc != doc_id,
             None => false,
         };
         if foreign {
@@ -330,6 +359,16 @@ impl ToolState {
         }
         if let Some(t) = self.geo.transform.as_mut() {
             t.handle(open, out);
+            return;
+        }
+        let mask_tools = matches!(
+            self.tool,
+            Tool::Brush | Tool::Pencil | Tool::Eraser | Tool::Bucket | Tool::Gradient
+        );
+        if mask_tools
+            && (self.mask_editing(open) || matches!(self.active, Some(Active::MaskEdit { .. })))
+        {
+            self.handle_mask_edit(open, out);
             return;
         }
         match self.tool {
@@ -346,6 +385,7 @@ impl ToolState {
     }
 
     fn handle_move(&mut self, open: &mut OpenDoc, out: &CanvasOut) {
+        let (open_w, open_h) = (open.doc.width, open.doc.height);
         if let Some(p) = out.pressed {
             let sel = open.selection_ids();
             let unlocked: Vec<LayerId> = sel
@@ -396,6 +436,19 @@ impl ToolState {
                             continue;
                         };
                         cur.pixels = Arc::new(layerops::shifted_pixels(orig, d.0, d.1));
+                        if let (Some(cm), Some(om)) = (cur.mask.as_mut(), orig.mask.as_ref()) {
+                            if cm.linked {
+                                let nd = orvalith_core::selection::shift_mask(
+                                    om.data(),
+                                    open_w,
+                                    open_h,
+                                    d.0,
+                                    d.1,
+                                    255,
+                                );
+                                cm.set_data(Arc::new(nd));
+                            }
+                        }
                     }
                     let r = Rect::full(open.doc.width, open.doc.height);
                     open.mark_dirty(r);
@@ -409,6 +462,183 @@ impl ToolState {
                 } else {
                     let r = Rect::full(open.doc.width, open.doc.height);
                     open.record_layers("Mover camada", before, r);
+                }
+            }
+        }
+    }
+
+    /// A pintura vai para a máscara da camada ativa?
+    fn mask_editing(&self, open: &OpenDoc) -> bool {
+        open.edit_mask
+            && open
+                .active_idx()
+                .is_some_and(|i| open.doc.layers[i].mask.is_some())
+    }
+
+    /// Copia a área `rect` da camada-sombra cinza para a máscara real (prévia ao vivo).
+    fn sync_mask(open: &mut OpenDoc, layer: LayerId, temp: &Layer, rect: Rect) {
+        let w = temp.width as usize;
+        let rect = rect.clamp_to(temp.width, temp.height);
+        if let Some(m) = open.doc.layer_mut(layer).and_then(|l| l.mask.as_mut()) {
+            if m.data().len() == w * temp.height as usize {
+                let buf = m.data_mut();
+                for y in rect.y..rect.bottom() {
+                    for x in rect.x..rect.right() {
+                        buf[y as usize * w + x as usize] =
+                            temp.pixels[(y as usize * w + x as usize) * 4];
+                    }
+                }
+            }
+        }
+        open.mark_dirty(rect);
+    }
+
+    /// Ferramentas de pintura aplicadas à máscara: preto oculta, branco revela.
+    fn handle_mask_edit(&mut self, open: &mut OpenDoc, out: &CanvasOut) {
+        let pressure = if self.pressure_size {
+            out.pressure
+        } else {
+            1.0
+        };
+        let (w, h) = (open.doc.width, open.doc.height);
+        if let Some(p) = out.pressed {
+            let Some(idx) = open.active_idx() else { return };
+            let layer_id = open.doc.layers[idx].id;
+            let Some(data) = open.doc.layers[idx].mask.as_ref().map(|m| m.data().clone()) else {
+                return;
+            };
+            if data.len() != w as usize * h as usize {
+                return;
+            }
+            self.notice = None;
+            let gray_px: Vec<u8> = data.iter().flat_map(|&v| [v, v, v, 255]).collect();
+            let mut temp = Layer::from_pixels("máscara", w, h, gray_px);
+            let original = temp.pixels.clone();
+            let sel = open.doc.selection.mask.clone();
+            let (fg, bg) = (gray(self.fg), gray(self.bg));
+            match self.tool {
+                Tool::Bucket => {
+                    let patch = bucket_fill(
+                        &mut temp,
+                        p[0].floor() as i64,
+                        p[1].floor() as i64,
+                        self.tolerance,
+                        self.contiguous,
+                        fg,
+                        self.fill_opacity,
+                        false,
+                        sel.as_ref().map(|m| m.as_slice()),
+                    );
+                    if let Some(patch) = patch {
+                        let rect = patch.rect();
+                        Self::sync_mask(open, layer_id, &temp, rect);
+                        let cmd = MaskPatch::from_gray_patch("Balde na máscara", layer_id, &patch);
+                        open.record_cmd(Box::new(cmd), rect);
+                    } else {
+                        self.notice = Some("Nada a preencher neste ponto da máscara.".into());
+                    }
+                }
+                Tool::Gradient => {
+                    self.active = Some(Active::MaskEdit {
+                        doc: open.doc.id,
+                        layer: layer_id,
+                        temp: Box::new(temp),
+                        original,
+                        stroke: None,
+                        grad_start: Some((p[0], p[1])),
+                    });
+                }
+                _ => {
+                    let (color, pencil, label) = match self.tool {
+                        Tool::Pencil => (fg, true, "Lápis na máscara"),
+                        Tool::Eraser => (bg, false, "Borracha na máscara"),
+                        _ => (fg, false, "Pincel na máscara"),
+                    };
+                    let mut session = Box::new(
+                        StrokeSession::begin(
+                            &temp,
+                            self.brush,
+                            color,
+                            StrokeMode::Paint,
+                            pencil,
+                            label,
+                        )
+                        .with_selection(sel),
+                    );
+                    if let Some(r) = session.add_point(&mut temp, p[0], p[1], pressure) {
+                        Self::sync_mask(open, layer_id, &temp, r);
+                    }
+                    self.active = Some(Active::MaskEdit {
+                        doc: open.doc.id,
+                        layer: layer_id,
+                        temp: Box::new(temp),
+                        original,
+                        stroke: Some(session),
+                        grad_start: None,
+                    });
+                }
+            }
+        } else if matches!(self.active, Some(Active::MaskEdit { .. })) {
+            let grad_colors = (gray(self.fg), gray(self.bg));
+            let (old_fg, old_bg) = (self.fg, self.bg);
+            self.fg = grad_colors.0;
+            self.bg = grad_colors.1;
+            let g = match &self.active {
+                Some(Active::MaskEdit {
+                    grad_start: Some(s),
+                    ..
+                }) => out.moves.last().map(|m| self.gradient(*s, (m[0], m[1]))),
+                _ => None,
+            };
+            self.fg = old_fg;
+            self.bg = old_bg;
+            let sel = open.doc.selection.mask.clone();
+            if let Some(Active::MaskEdit {
+                layer,
+                temp,
+                original,
+                stroke,
+                ..
+            }) = self.active.as_mut()
+            {
+                if let Some(session) = stroke.as_mut() {
+                    let mut dirty: Option<Rect> = None;
+                    for m in &out.moves {
+                        if let Some(r) = session.add_point(temp, m[0], m[1], pressure) {
+                            dirty = Some(dirty.map_or(r, |d| d.union(r)));
+                        }
+                    }
+                    if let Some(r) = dirty {
+                        Self::sync_mask(open, *layer, temp, r);
+                    }
+                } else if let Some(g) = g {
+                    if g.render(temp, original, false, sel.as_ref().map(|m| m.as_slice())) {
+                        Self::sync_mask(open, *layer, temp, Rect::full(w, h));
+                    }
+                }
+            }
+        }
+        if (out.released || !out.down) && matches!(self.active, Some(Active::MaskEdit { .. })) {
+            if let Some(Active::MaskEdit {
+                layer,
+                mut temp,
+                original,
+                stroke,
+                ..
+            }) = self.active.take()
+            {
+                let (patch, label) = match stroke {
+                    Some(session) => (session.finish(&mut temp), "Pintar máscara"),
+                    None => (
+                        PixelPatch::from_diff("Gradiente", &temp, &original, Rect::full(w, h)),
+                        "Gradiente na máscara",
+                    ),
+                };
+                if let Some(patch) = patch {
+                    let rect = patch.rect();
+                    Self::sync_mask(open, layer, &temp, rect);
+                    let cmd = MaskPatch::from_gray_patch(label, layer, &patch);
+                    open.record_cmd(Box::new(cmd), rect);
                 }
             }
         }
@@ -1138,5 +1368,133 @@ mod tests {
         drag(&mut t, &mut o, &[[5.0, 5.0], [5.0, 5.0]]);
         let v = o.doc.layers[0].pixel(5, 5).unwrap();
         assert!((126..=129).contains(&v[0]), "{v:?}");
+    }
+    fn mask_doc() -> OpenDoc {
+        let mut o = OpenDoc::new(Document::new("t", 40, 30, Some([255, 255, 255, 255])).unwrap());
+        o.doc
+            .layers
+            .push(Layer::filled("A", 40, 30, [200, 0, 0, 255]));
+        let id = o.doc.layers[1].id;
+        o.active_layer = id;
+        o.selected = vec![id];
+        o.doc.layers[1].mask = Some(orvalith_core::LayerMask::new(vec![255; 40 * 30]));
+        o.edit_mask = true;
+        o
+    }
+
+    #[test]
+    fn brush_on_mask_hides_without_touching_pixels_and_is_one_action() {
+        use orvalith_core::compose::pixel_at;
+        let mut o = mask_doc();
+        let pixels = o.doc.layers[1].pixels.clone();
+        let mut t = ToolState::new(
+            BrushParams {
+                size: 6.0,
+                hardness: 1.0,
+                ..BrushParams::default()
+            },
+            [0, 0, 0, 255],
+            [255, 255, 255, 255],
+        );
+        drag(&mut t, &mut o, &[[5.0, 15.0], [35.0, 15.0]]);
+        assert_eq!(o.history.labels(), vec!["Pintar máscara"]);
+        assert_eq!(
+            pixel_at(&o.doc, 20, 15),
+            Some([255, 255, 255, 255]),
+            "mascarado: aparece o fundo"
+        );
+        assert_eq!(pixel_at(&o.doc, 20, 2), Some([200, 0, 0, 255]));
+        assert_eq!(
+            o.doc.layers[1].pixels, pixels,
+            "pixels da camada preservados"
+        );
+        // Borracha pinta com a cor de fundo (branco): revela de volta.
+        t.tool = Tool::Eraser;
+        drag(&mut t, &mut o, &[[5.0, 15.0], [35.0, 15.0]]);
+        assert_eq!(pixel_at(&o.doc, 20, 15), Some([200, 0, 0, 255]));
+        o.history.undo(&mut o.doc);
+        assert_eq!(pixel_at(&o.doc, 20, 15), Some([255, 255, 255, 255]));
+        o.history.undo(&mut o.doc);
+        assert_eq!(pixel_at(&o.doc, 20, 15), Some([200, 0, 0, 255]));
+        assert!(!t.is_busy());
+    }
+
+    #[test]
+    fn bucket_and_gradient_on_mask() {
+        use orvalith_core::compose::pixel_at;
+        let mut o = mask_doc();
+        let mut t = ToolState::new(BrushParams::default(), [0, 0, 0, 255], [255, 255, 255, 255]);
+        t.tool = Tool::Bucket;
+        t.tolerance = 0;
+        drag(&mut t, &mut o, &[[3.0, 3.0], [3.0, 3.0]]);
+        assert_eq!(
+            pixel_at(&o.doc, 10, 10),
+            Some([255, 255, 255, 255]),
+            "máscara toda preta"
+        );
+        o.history.undo(&mut o.doc);
+        // Gradiente preto→branco da esquerda para a direita: esquerda oculta, direita visível.
+        t.tool = Tool::Gradient;
+        drag(&mut t, &mut o, &[[0.0, 15.0], [20.0, 15.0], [39.0, 15.0]]);
+        assert_eq!(o.history.labels(), vec!["Gradiente na máscara"]);
+        let left = pixel_at(&o.doc, 1, 15).unwrap();
+        let right = pixel_at(&o.doc, 38, 15).unwrap();
+        assert!(left[1] > 200, "esquerda quase oculta: {left:?}");
+        assert!(right[1] < 20, "direita quase visível: {right:?}");
+        o.history.undo(&mut o.doc);
+        assert!(o.doc.layers[1]
+            .mask
+            .as_ref()
+            .unwrap()
+            .data()
+            .iter()
+            .all(|&v| v == 255));
+    }
+
+    #[test]
+    fn painting_target_follows_edit_mask_flag() {
+        let mut o = mask_doc();
+        o.edit_mask = false;
+        let mut t = ToolState::new(
+            BrushParams {
+                size: 6.0,
+                hardness: 1.0,
+                ..BrushParams::default()
+            },
+            [0, 0, 255, 255],
+            [255, 255, 255, 255],
+        );
+        drag(&mut t, &mut o, &[[5.0, 5.0], [30.0, 5.0]]);
+        assert_eq!(o.history.labels(), vec!["Pincel"]);
+        assert!(o.doc.layers[1]
+            .mask
+            .as_ref()
+            .unwrap()
+            .data()
+            .iter()
+            .all(|&v| v == 255));
+        assert_eq!(o.doc.layers[1].pixel(20, 5), Some([0, 0, 255, 255]));
+    }
+
+    #[test]
+    fn move_tool_carries_linked_mask_and_leaves_unlinked() {
+        for linked in [true, false] {
+            let mut o = mask_doc();
+            o.edit_mask = false;
+            o.doc.layers[1].mask.as_mut().unwrap().data_mut()[5 * 40 + 5] = 0;
+            o.doc.layers[1].mask.as_mut().unwrap().linked = linked;
+            let mut t = ToolState::new(BrushParams::default(), [0; 4], [0; 4]);
+            t.tool = Tool::Move;
+            drag(&mut t, &mut o, &[[10.0, 10.0], [14.0, 12.0], [15.0, 13.0]]);
+            let md = o.doc.layers[1].mask.as_ref().unwrap().data().clone();
+            if linked {
+                assert_eq!(md[8 * 40 + 10], 0, "marca andou (5,3)");
+                assert_eq!(md[5 * 40 + 5], 255);
+            } else {
+                assert_eq!(md[5 * 40 + 5], 0);
+            }
+            o.history.undo(&mut o.doc);
+            assert_eq!(o.doc.layers[1].mask.as_ref().unwrap().data()[5 * 40 + 5], 0);
+        }
     }
 }

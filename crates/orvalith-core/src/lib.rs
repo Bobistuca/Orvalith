@@ -14,6 +14,7 @@ pub mod geom;
 pub mod history;
 pub mod imageio;
 pub mod layerops;
+pub mod maskops;
 pub mod orva;
 pub mod paint;
 pub mod selection;
@@ -22,6 +23,8 @@ pub mod transform;
 pub mod view;
 
 pub use blend::BlendMode;
-pub use document::{Channel, Document, DocumentId, Guide, Layer, LayerId, LayerKind, Selection};
+pub use document::{
+    Channel, Document, DocumentId, Guide, Layer, LayerId, LayerKind, LayerMask, Selection,
+};
 pub use geom::Rect;
 pub use history::{Command, History};

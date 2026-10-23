@@ -3,6 +3,7 @@
 use eframe::egui;
 use orvalith_core::edit::{LayersEdit, SetVisible};
 use orvalith_core::layerops::{self, Outcome};
+use orvalith_core::maskops::{self, MaskInit};
 use orvalith_core::{BlendMode, Layer, LayerId};
 
 use crate::canvas::OpenDoc;
@@ -24,6 +25,14 @@ pub enum LayerCmd {
     Flatten,
     Copy,
     Paste,
+    AddMask(MaskInit),
+    DeleteMask,
+    ApplyMask,
+    InvertMask,
+    MaskToSelection,
+    RefineMask,
+    ToggleClip,
+    ToggleMaskView,
 }
 
 impl OpenDoc {
@@ -135,6 +144,72 @@ pub fn run(
             Some(o) => open.apply_outcome("Achatar imagem", o),
             None => return Some("A imagem já está achatada.".into()),
         },
+        LayerCmd::AddMask(init) => match active {
+            Some(id) => match maskops::add_mask(&open.doc, id, init) {
+                Ok(layers) => {
+                    open.edit_layers("Adicionar máscara", |ls| *ls = layers);
+                    open.edit_mask = true;
+                }
+                Err(e) => return Some(e),
+            },
+            None => return nothing(),
+        },
+        LayerCmd::DeleteMask | LayerCmd::ApplyMask | LayerCmd::InvertMask => {
+            let Some(id) = active else { return nothing() };
+            let (label, result) = match cmd {
+                LayerCmd::DeleteMask => ("Excluir máscara", maskops::delete_mask(&open.doc, id)),
+                LayerCmd::ApplyMask => ("Aplicar máscara", maskops::apply_mask(&open.doc, id)),
+                _ => ("Inverter máscara", maskops::invert_mask(&open.doc, id)),
+            };
+            match result {
+                Ok(layers) => {
+                    open.edit_layers(label, |ls| *ls = layers);
+                    if cmd != LayerCmd::InvertMask {
+                        open.edit_mask = false;
+                        open.mask_view = None;
+                        open.doc.bump_view();
+                    }
+                }
+                Err(e) => return Some(e),
+            }
+        }
+        LayerCmd::MaskToSelection => {
+            let Some(id) = active else { return nothing() };
+            match maskops::mask_to_selection(&open.doc, id) {
+                Some(m) => {
+                    crate::select::set_selection(open, "Máscara para seleção", Some(m));
+                }
+                None => return Some("A camada não tem máscara (ou ela está vazia).".into()),
+            }
+        }
+        LayerCmd::RefineMask => {} // tratado pelo aplicativo (abre o diálogo)
+        LayerCmd::ToggleClip => {
+            let Some(idx) = open.active_idx() else {
+                return nothing();
+            };
+            let clipped = open.doc.layers[idx].clipped;
+            open.edit_layers(
+                if clipped {
+                    "Soltar recorte"
+                } else {
+                    "Recortar na camada abaixo"
+                },
+                |ls| ls[idx].clipped = !clipped,
+            );
+        }
+        LayerCmd::ToggleMaskView => {
+            let Some(id) = active else { return nothing() };
+            if open.doc.layer(id).is_some_and(|l| l.mask.is_some()) {
+                open.mask_view = if open.mask_view == Some(id) {
+                    None
+                } else {
+                    Some(id)
+                };
+                open.doc.bump_view();
+            } else {
+                return Some("A camada não tem máscara.".into());
+            }
+        }
         LayerCmd::Copy => {
             *clip = layerops::copy_nodes(&open.doc, &sel);
             return Some(format!("{} item(ns) copiado(s).", clip.len()));
@@ -179,9 +254,10 @@ fn update_thumbs(ctx: &egui::Context, open: &mut OpenDoc, busy: bool) {
     open.thumbs_rev = open.doc.revision;
     let live: Vec<LayerId> = open.doc.layers.iter().map(|l| l.id).collect();
     open.thumbs.retain(|id, _| live.contains(id));
+    open.mask_thumbs.retain(|id, _| live.contains(id));
+    let opts = egui::TextureOptions::NEAREST;
     for l in &open.doc.layers {
         if let Some(img) = thumbnail(l) {
-            let opts = egui::TextureOptions::NEAREST;
             match open.thumbs.get_mut(&l.id) {
                 Some(tex) => tex.set(img, opts),
                 None => {
@@ -190,7 +266,45 @@ fn update_thumbs(ctx: &egui::Context, open: &mut OpenDoc, busy: bool) {
                 }
             }
         }
+        match l
+            .mask
+            .as_ref()
+            .and_then(|m| mask_thumbnail(m.data(), open.doc.width, open.doc.height))
+        {
+            Some(img) => match open.mask_thumbs.get_mut(&l.id) {
+                Some(tex) => tex.set(img, opts),
+                None => {
+                    let tex = ctx.load_texture(format!("mthumb{}", l.id.0), img, opts);
+                    open.mask_thumbs.insert(l.id, tex);
+                }
+            },
+            None => {
+                open.mask_thumbs.remove(&l.id);
+            }
+        }
     }
+}
+
+/// Miniatura em tons de cinza de uma máscara.
+fn mask_thumbnail(mask: &[u8], w: u32, h: u32) -> Option<egui::ColorImage> {
+    if w == 0 || h == 0 || mask.len() != w as usize * h as usize {
+        return None;
+    }
+    let (wu, hu) = (w as usize, h as usize);
+    let scale = (wu.max(hu) as f32 / THUMB as f32).max(1.0);
+    let (tw, th) = (
+        ((wu as f32 / scale).round() as usize).max(1),
+        ((hu as f32 / scale).round() as usize).max(1),
+    );
+    let mut px = Vec::with_capacity(tw * th);
+    for y in 0..th {
+        for x in 0..tw {
+            let sx = (((x as f32 + 0.5) * scale) as usize).min(wu - 1);
+            let sy = (((y as f32 + 0.5) * scale) as usize).min(hu - 1);
+            px.push(mask[sy * wu + sx]);
+        }
+    }
+    Some(egui::ColorImage::from_gray([tw, th], &px))
 }
 
 fn begin_prop_drag(open: &mut OpenDoc, label: &str) {
@@ -201,10 +315,16 @@ fn begin_prop_drag(open: &mut OpenDoc, label: &str) {
 
 fn end_prop_drag(open: &mut OpenDoc) {
     if let Some((label, before)) = open.prop_drag.take() {
-        let changed = before
-            .iter()
-            .zip(&open.doc.layers)
-            .any(|(a, b)| (a.opacity - b.opacity).abs() > 1e-6 || (a.fill - b.fill).abs() > 1e-6);
+        let changed = before.iter().zip(&open.doc.layers).any(|(a, b)| {
+            let mask_changed = match (&a.mask, &b.mask) {
+                (Some(x), Some(y)) => {
+                    (x.density() - y.density()).abs() > 1e-6
+                        || (x.feather() - y.feather()).abs() > 1e-6
+                }
+                _ => false,
+            };
+            (a.opacity - b.opacity).abs() > 1e-6 || (a.fill - b.fill).abs() > 1e-6 || mask_changed
+        });
         if changed {
             let after = open.doc.layers.clone();
             open.history.record(
@@ -215,8 +335,11 @@ fn end_prop_drag(open: &mut OpenDoc) {
     }
 }
 
-fn props_ui(ui: &mut egui::Ui, open: &mut OpenDoc) {
-    let Some(idx) = open.active_idx() else { return };
+fn props_ui(ui: &mut egui::Ui, open: &mut OpenDoc) -> Vec<LayerCmd> {
+    let mut cmds = Vec::new();
+    let Some(idx) = open.active_idx() else {
+        return cmds;
+    };
     let l = &open.doc.layers[idx];
     let (is_group, mut blend, locks) = (
         l.is_group(),
@@ -292,6 +415,144 @@ fn props_ui(ui: &mut egui::Ui, open: &mut OpenDoc) {
             ls[idx].lock_position = new_locks.2;
         });
     }
+    let mut clipped = open.doc.layers[idx].clipped;
+    if ui
+        .checkbox(&mut clipped, "Recortar na camada abaixo")
+        .on_hover_text("O conteúdo só aparece onde a camada de baixo tem pixels (Ctrl+Alt+G)")
+        .changed()
+    {
+        cmds.push(LayerCmd::ToggleClip);
+    }
+    ui.separator();
+    // ---- Máscara de camada ----
+    if let Some((enabled, linked, density, feather)) = open.doc.layers[idx]
+        .mask
+        .as_ref()
+        .map(|m| (m.enabled, m.linked, m.density(), m.feather()))
+    {
+        ui.strong("Máscara");
+        let (mut en, mut ln) = (enabled, linked);
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut en, "Ativa");
+            ui.checkbox(&mut ln, "Vinculada")
+                .on_hover_text("Mover/transformar a camada move a máscara junto");
+        });
+        if en != enabled || ln != linked {
+            open.edit_layers("Alterar máscara", |ls| {
+                if let Some(m) = ls[idx].mask.as_mut() {
+                    m.enabled = en;
+                    m.linked = ln;
+                }
+            });
+        }
+        for (label, is_feather) in [("Densidade", false), ("Pena", true)] {
+            let mut v = if is_feather { feather } else { density * 100.0 };
+            let r = ui.add(if is_feather {
+                egui::Slider::new(&mut v, 0.0..=100.0)
+                    .text(label)
+                    .suffix(" px")
+            } else {
+                egui::Slider::new(&mut v, 0.0..=100.0)
+                    .text(label)
+                    .suffix("%")
+                    .integer()
+            });
+            if r.changed() {
+                begin_prop_drag(
+                    open,
+                    if is_feather {
+                        "Pena da máscara"
+                    } else {
+                        "Densidade da máscara"
+                    },
+                );
+                if let Some(m) = open.doc.layers[idx].mask.as_mut() {
+                    if is_feather {
+                        m.set_feather(v);
+                    } else {
+                        m.set_density(v / 100.0);
+                    }
+                }
+                open.doc.touch();
+            }
+            if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                end_prop_drag(open);
+            }
+        }
+        ui.horizontal_wrapped(|ui| {
+            for (label, cmd, tip) in [
+                (
+                    "Aplicar",
+                    LayerCmd::ApplyMask,
+                    "Aplica ao alfa dos pixels e remove a máscara",
+                ),
+                (
+                    "Excluir",
+                    LayerCmd::DeleteMask,
+                    "Remove a máscara sem alterar os pixels",
+                ),
+                ("Inverter", LayerCmd::InvertMask, "Inverte a máscara"),
+                (
+                    "→ Seleção",
+                    LayerCmd::MaskToSelection,
+                    "Cria uma seleção a partir da máscara",
+                ),
+                (
+                    "Refinar…",
+                    LayerCmd::RefineMask,
+                    "Suavizar, deslocar borda, pena e contraste",
+                ),
+                (
+                    "Ver máscara",
+                    LayerCmd::ToggleMaskView,
+                    "Alterna a visão isolada da máscara em cinza",
+                ),
+            ] {
+                if ui.small_button(label).on_hover_text(tip).clicked() {
+                    cmds.push(cmd);
+                }
+            }
+        });
+        let mut target_mask = open.edit_mask;
+        ui.horizontal(|ui| {
+            ui.label("Pintar em:");
+            ui.radio_value(&mut target_mask, false, "Camada");
+            ui.radio_value(&mut target_mask, true, "Máscara");
+        });
+        open.edit_mask = target_mask;
+    } else {
+        open.edit_mask = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Máscara:");
+            for (label, init, tip) in [
+                (
+                    "+ Revelar tudo",
+                    MaskInit::Reveal,
+                    "Máscara branca (tudo visível)",
+                ),
+                (
+                    "+ Ocultar tudo",
+                    MaskInit::Hide,
+                    "Máscara preta (tudo oculto)",
+                ),
+                (
+                    "+ Da seleção",
+                    MaskInit::FromSelection,
+                    "Visível só dentro da seleção",
+                ),
+                (
+                    "+ Da seleção invertida",
+                    MaskInit::FromSelectionInverse,
+                    "Oculta o que está dentro da seleção",
+                ),
+            ] {
+                if ui.small_button(label).on_hover_text(tip).clicked() {
+                    cmds.push(LayerCmd::AddMask(init));
+                }
+            }
+        });
+    }
+    cmds
 }
 
 /// Linhas visíveis em ordem de exibição (topo primeiro) com a profundidade.
@@ -325,12 +586,14 @@ enum RowEvent {
     StartRename(LayerId),
     Rename(LayerId, String),
     CancelRename,
+    /// Clique numa miniatura: (camada, é a máscara?, modificadores).
+    PickTarget(LayerId, bool, egui::Modifiers),
 }
 
-fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) {
+fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) -> Vec<LayerCmd> {
     let rows = visible_rows(open);
     let mut events: Vec<RowEvent> = Vec::new();
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    ui.scope(|ui| {
         for (id, depth) in &rows {
             let Some(l) = open.doc.layer(*id) else {
                 continue;
@@ -338,9 +601,13 @@ fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) {
             let (name, visible, group, expanded) =
                 (l.name.clone(), l.visible, l.is_group(), l.expanded);
             let locked = l.lock_pixels || l.lock_alpha || l.lock_position;
+            let clipped = l.clipped;
+            let has_mask = l.mask.is_some();
+            let mask_enabled = l.mask.as_ref().is_some_and(|m| m.enabled);
             let selected = open.selected.contains(id);
+            let is_active = open.active_layer == *id;
             ui.horizontal(|ui| {
-                ui.add_space(*depth as f32 * 14.0);
+                ui.add_space(*depth as f32 * 14.0 + if clipped { 10.0 } else { 0.0 });
                 if group {
                     if ui.small_button(if expanded { "-" } else { "+" }).clicked() {
                         events.push(RowEvent::Expand(*id));
@@ -360,18 +627,51 @@ fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) {
                         events.push(RowEvent::Visible(*id, v));
                     }
                 }
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
-                ui.painter()
-                    .rect_filled(rect, 2.0, egui::Color32::from_gray(90));
-                if let Some(tex) = open.thumbs.get(id) {
-                    let sz = tex.size_vec2();
-                    let fit = egui::Rect::from_center_size(rect.center(), sz.min(rect.size()));
-                    ui.painter().image(
-                        tex.id(),
-                        fit,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
+                let accent = crate::theme::ACCENT;
+                let thumb = |ui: &mut egui::Ui, tex: Option<&egui::TextureHandle>, picked: bool| {
+                    let (rect, resp) =
+                        ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
+                    ui.painter()
+                        .rect_filled(rect, 2.0, egui::Color32::from_gray(90));
+                    if let Some(tex) = tex {
+                        let sz = tex.size_vec2();
+                        let fit = egui::Rect::from_center_size(rect.center(), sz.min(rect.size()));
+                        ui.painter().image(
+                            tex.id(),
+                            fit,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                    }
+                    if picked {
+                        ui.painter().rect_stroke(
+                            rect,
+                            2.0,
+                            egui::Stroke::new(2.0, accent),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    resp
+                };
+                let tr = thumb(ui, open.thumbs.get(id), is_active && !open.edit_mask);
+                if tr.clicked() {
+                    events.push(RowEvent::PickTarget(*id, false, ui.input(|i| i.modifiers)));
+                }
+                if has_mask {
+                    let mr = thumb(ui, open.mask_thumbs.get(id), is_active && open.edit_mask);
+                    if !mask_enabled {
+                        let r = mr.rect;
+                        let red = egui::Stroke::new(2.0, egui::Color32::from_rgb(220, 60, 60));
+                        ui.painter()
+                            .line_segment([r.left_top(), r.right_bottom()], red);
+                        ui.painter()
+                            .line_segment([r.right_top(), r.left_bottom()], red);
+                    }
+                    if mr.clicked() {
+                        events.push(RowEvent::PickTarget(*id, true, ui.input(|i| i.modifiers)));
+                    }
+                    mr.on_hover_text(
+                        "Máscara (Alt+clique: ver em cinza · Ctrl+clique: máscara → seleção)",
                     );
                 }
                 if open.renaming.as_ref().is_some_and(|(rid, _)| rid == id) {
@@ -387,11 +687,10 @@ fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) {
                         }
                     }
                 } else {
-                    let label = if locked {
-                        format!("{name}  (bloq.)")
-                    } else {
-                        name
-                    };
+                    let mut label = if clipped { format!("> {name}") } else { name };
+                    if locked {
+                        label.push_str("  (bloq.)");
+                    }
                     let text = if group {
                         egui::RichText::new(label).strong()
                     } else {
@@ -408,6 +707,7 @@ fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) {
             });
         }
     });
+    let mut cmds = Vec::new();
     for e in events {
         match e {
             RowEvent::Expand(id) => {
@@ -450,6 +750,21 @@ fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) {
                     open.active_layer = id;
                 }
             }
+            RowEvent::PickTarget(id, mask, m) => {
+                open.selected = vec![id];
+                open.active_layer = id;
+                open.edit_mask = mask;
+                if mask && m.alt {
+                    open.mask_view = if open.mask_view == Some(id) {
+                        None
+                    } else {
+                        Some(id)
+                    };
+                    open.doc.bump_view();
+                } else if mask && m.command {
+                    cmds.push(LayerCmd::MaskToSelection);
+                }
+            }
             RowEvent::StartRename(id) => {
                 if let Some(l) = open.doc.layer(id) {
                     open.renaming = Some((id, l.name.clone()));
@@ -469,13 +784,116 @@ fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) {
             RowEvent::CancelRename => open.renaming = None,
         }
     }
+    cmds
+}
+
+/// Painel de canais: canais de cor (visualização) e seleções salvas como canais alfa.
+pub fn channels_ui(ui: &mut egui::Ui, open: &mut OpenDoc) {
+    let mut ch_changed = false;
+    ui.horizontal(|ui| {
+        for (i, label) in ["R", "G", "B"].iter().enumerate() {
+            ch_changed |= ui.checkbox(&mut open.view_channels[i], *label).changed();
+        }
+    });
+    if ch_changed {
+        // Só afeta a visualização; força o redesenho.
+        open.doc.bump_view();
+    }
+    if open.view_channels != [true; 3] {
+        ui.small("Mostrando só alguns canais (a exportação não é afetada).");
+    }
+    ui.separator();
+    if open.doc.channels.is_empty() {
+        ui.small("Nenhum canal alfa salvo. Use Selecionar → Canais de seleção.");
+    }
+    let mut load: Option<usize> = None;
+    let mut delete: Option<usize> = None;
+    let mut edit: Option<u64> = None;
+    let mut rename: Option<(u64, String)> = None;
+    let mut view_toggle: Option<u64> = None;
+    let chans: Vec<(u64, String)> = open
+        .doc
+        .channels
+        .iter()
+        .map(|c| (c.id, c.name.clone()))
+        .collect();
+    for (i, (id, name)) in chans.iter().enumerate() {
+        ui.horizontal(|ui| {
+            let mut shown = open.channel_view == Some(*id);
+            if ui
+                .checkbox(&mut shown, "")
+                .on_hover_text("Ver o canal em cinza")
+                .changed()
+            {
+                view_toggle = Some(*id);
+            }
+            if open
+                .renaming_channel
+                .as_ref()
+                .is_some_and(|(rid, _)| rid == id)
+            {
+                if let Some((_, text)) = open.renaming_channel.as_mut() {
+                    let r = ui.add(egui::TextEdit::singleline(text).desired_width(90.0));
+                    r.request_focus();
+                    if r.lost_focus() {
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            rename = Some((*id, text.clone()));
+                        } else {
+                            open.renaming_channel = None;
+                        }
+                    }
+                }
+            } else {
+                let r = ui.label(name);
+                if r.double_clicked() {
+                    open.renaming_channel = Some((*id, name.clone()));
+                }
+                r.on_hover_text("Duplo clique renomeia");
+            }
+            if ui.small_button("Selecionar").clicked() {
+                load = Some(i);
+            }
+            if ui
+                .small_button("Editar")
+                .on_hover_text("Edita o canal na máscara rápida")
+                .clicked()
+            {
+                edit = Some(*id);
+            }
+            if ui.small_button("Excluir").clicked() {
+                delete = Some(i);
+            }
+        });
+    }
+    if let Some(id) = view_toggle {
+        open.channel_view = if open.channel_view == Some(id) {
+            None
+        } else {
+            Some(id)
+        };
+        open.doc.bump_view();
+    }
+    if let Some(i) = load {
+        crate::select::channel_load(open, i, orvalith_core::selection::Combine::Replace);
+    }
+    if let Some(i) = delete {
+        crate::select::channel_delete(open, i);
+    }
+    if let Some((id, name)) = rename {
+        open.renaming_channel = None;
+        crate::select::channel_rename(open, id, name.trim());
+    }
+    if let Some(id) = edit {
+        if open.qm.is_none() {
+            open.enter_quick_mask_for_channel(id);
+        }
+    }
 }
 
 /// Desenha o painel e devolve as operações pedidas pelos botões.
 pub fn show(ui: &mut egui::Ui, open: &mut OpenDoc, busy: bool) -> Vec<LayerCmd> {
     update_thumbs(ui.ctx(), open, busy);
-    let mut cmds = Vec::new();
-    props_ui(ui, open);
+    let mut cmds = props_ui(ui, open);
     ui.separator();
     let buttons: [(&str, LayerCmd, &str); 12] = [
         ("Nova", LayerCmd::New, "Nova camada (Ctrl+Shift+N)"),
@@ -524,8 +942,26 @@ pub fn show(ui: &mut egui::Ui, open: &mut OpenDoc, busy: bool) -> Vec<LayerCmd> 
             }
         });
     }
+    if let Some(mv) = open.mask_view {
+        let name = open
+            .doc
+            .layer(mv)
+            .map(|l| l.name.clone())
+            .unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.colored_label(crate::theme::COPPER, format!("Vendo a máscara de: {name}"));
+            if ui.small_button("Voltar").clicked() {
+                open.mask_view = None;
+                open.doc.bump_view();
+            }
+        });
+    }
     ui.separator();
-    list_ui(ui, open);
+    cmds.extend(list_ui(ui, open));
+    ui.separator();
+    egui::CollapsingHeader::new("Canais")
+        .default_open(false)
+        .show(ui, |ui| channels_ui(ui, open));
     cmds
 }
 
@@ -617,5 +1053,69 @@ mod tests {
         let t = thumbnail(&l).unwrap();
         assert_eq!(t.size, [32, 16]);
         assert!(thumbnail(&Layer::group("g")).is_none());
+    }
+    #[test]
+    fn mask_commands_are_single_undoable_actions_and_keep_pixels() {
+        use orvalith_core::compose::pixel_at;
+        let mut o = open_with_two();
+        let original = o.doc.layers[1].pixels.clone();
+        assert!(run1(&mut o, LayerCmd::AddMask(MaskInit::Hide)).is_none());
+        assert!(o.edit_mask && o.doc.layers[1].mask.is_some());
+        assert_eq!(pixel_at(&o.doc, 1, 1), Some([10, 10, 10, 255]));
+        assert_eq!(
+            o.doc.layers[1].pixels, original,
+            "pixels intactos sob a máscara"
+        );
+        assert!(
+            run1(&mut o, LayerCmd::AddMask(MaskInit::Reveal)).is_some(),
+            "já tem máscara"
+        );
+        assert!(run1(&mut o, LayerCmd::InvertMask).is_none());
+        assert_eq!(pixel_at(&o.doc, 1, 1), Some([200, 0, 0, 255]));
+        assert!(run1(&mut o, LayerCmd::ToggleMaskView).is_none());
+        assert_eq!(o.mask_view, Some(o.doc.layers[1].id));
+        assert!(run1(&mut o, LayerCmd::ApplyMask).is_none());
+        assert!(o.doc.layers[1].mask.is_none() && !o.edit_mask && o.mask_view.is_none());
+        assert_eq!(
+            o.history.labels(),
+            vec!["Adicionar máscara", "Inverter máscara", "Aplicar máscara"]
+        );
+        o.history.undo(&mut o.doc);
+        o.history.undo(&mut o.doc);
+        assert_eq!(pixel_at(&o.doc, 1, 1), Some([10, 10, 10, 255]));
+        o.history.undo(&mut o.doc);
+        assert!(o.doc.layers[1].mask.is_none());
+        assert!(run1(&mut o, LayerCmd::DeleteMask).is_some(), "sem máscara");
+    }
+
+    #[test]
+    fn clip_toggle_and_density_drag_record_one_action_each() {
+        use orvalith_core::compose::pixel_at;
+        let mut o = open_with_two();
+        // Camada clipada na de baixo (fundo opaco): continua visível por inteiro.
+        assert!(run1(&mut o, LayerCmd::ToggleClip).is_none());
+        assert!(o.doc.layers[1].clipped);
+        assert_eq!(pixel_at(&o.doc, 0, 0), Some([200, 0, 0, 255]));
+        o.history.undo(&mut o.doc);
+        assert!(!o.doc.layers[1].clipped);
+        run1(&mut o, LayerCmd::AddMask(MaskInit::Hide));
+        let before = o.history.labels().len();
+        begin_prop_drag(&mut o, "Densidade da máscara");
+        for d in [0.9, 0.6, 0.3] {
+            o.doc.layers[1].mask.as_mut().unwrap().set_density(d);
+            o.doc.touch();
+        }
+        end_prop_drag(&mut o);
+        assert_eq!(o.history.labels().len(), before + 1);
+        assert_eq!(o.doc.layers[1].mask.as_ref().unwrap().density(), 0.3);
+        o.history.undo(&mut o.doc);
+        assert_eq!(o.doc.layers[1].mask.as_ref().unwrap().density(), 1.0);
+    }
+
+    #[test]
+    fn mask_thumbnail_is_gray_and_sized() {
+        let t = mask_thumbnail(&vec![128u8; 200 * 100], 200, 100).unwrap();
+        assert_eq!(t.size, [32, 16]);
+        assert!(mask_thumbnail(&[0u8; 3], 4, 4).is_none());
     }
 }

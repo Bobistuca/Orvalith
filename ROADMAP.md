@@ -16,7 +16,7 @@ Estados: planned · in progress · partial · validated · blocked. Detalhes de 
 | 4 | Camadas e composição (modos de mesclagem) | 2 | partial |
 | 5 | Seleções | 3, 4 | partial |
 | 6 | Transformações e geometria | 5 | partial |
-| 7 | Máscaras, recorte, canais | 5 | planned |
+| 7 | Máscaras, recorte, canais | 5 | partial |
 | 8 | Texto, formas e caminhos | 6, 7 | planned |
 | 9 | Ajustes e gerenciamento de cor | 4 | planned |
 | 10 | Retoque e filtros clássicos | 5, 9 | planned |

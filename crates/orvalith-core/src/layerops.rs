@@ -484,6 +484,25 @@ fn recentre(src: &Layer, w: u32, h: u32) -> Layer {
     out.width = w;
     out.height = h;
     out.pixels = std::sync::Arc::new(dst);
+    if let Some(m) = out.mask.as_mut() {
+        if m.data().len() == src.width as usize * src.height as usize {
+            let mut md = vec![255u8; w as usize * h as usize];
+            for y in 0..i64::from(src.height) {
+                let ty = y + oy;
+                if ty < 0 || ty >= i64::from(h) {
+                    continue;
+                }
+                for x in 0..i64::from(src.width) {
+                    let tx = x + ox;
+                    if tx >= 0 && tx < i64::from(w) {
+                        md[ty as usize * w as usize + tx as usize] =
+                            m.data()[y as usize * src.width as usize + x as usize];
+                    }
+                }
+            }
+            m.set_data(std::sync::Arc::new(md));
+        }
+    }
     out
 }
 

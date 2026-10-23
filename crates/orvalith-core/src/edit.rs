@@ -203,6 +203,95 @@ impl PixelPatch {
     pub fn rect(&self) -> Rect {
         self.rect
     }
+
+    /// Pixels RGBA da área antes e depois (para converter em outros tipos de retalho).
+    pub fn before_pixels(&self) -> &[u8] {
+        &self.before
+    }
+
+    pub fn after_pixels(&self) -> &[u8] {
+        &self.after
+    }
+}
+
+/// Troca bytes de um retângulo da máscara de uma camada (pintura na máscara).
+pub struct MaskPatch {
+    label: String,
+    layer: LayerId,
+    rect: Rect,
+    before: Vec<u8>,
+    after: Vec<u8>,
+}
+
+impl MaskPatch {
+    pub fn new(label: &str, layer: LayerId, rect: Rect, before: Vec<u8>, after: Vec<u8>) -> Self {
+        Self {
+            label: label.to_string(),
+            layer,
+            rect,
+            before,
+            after,
+        }
+    }
+
+    /// Converte um retalho de pixels de uma camada-sombra cinza (R = valor da máscara).
+    pub fn from_gray_patch(label: &str, layer: LayerId, p: &PixelPatch) -> Self {
+        let r = |v: &[u8]| {
+            v.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|px| px[0])
+                .collect::<Vec<u8>>()
+        };
+        Self::new(
+            label,
+            layer,
+            p.rect(),
+            r(p.before_pixels()),
+            r(p.after_pixels()),
+        )
+    }
+
+    pub fn rect(&self) -> Rect {
+        self.rect
+    }
+
+    fn write(&self, doc: &mut Document, data: &[u8]) {
+        let (dw, dh) = (doc.width, doc.height);
+        if let Some(m) = layer_mut(doc, self.layer).and_then(|l| l.mask.as_mut()) {
+            if self.rect.right() > dw
+                || self.rect.bottom() > dh
+                || m.data().len() != dw as usize * dh as usize
+            {
+                return;
+            }
+            let buf = m.data_mut();
+            let row = self.rect.w as usize;
+            for (i, y) in (self.rect.y..self.rect.bottom()).enumerate() {
+                let d = y as usize * dw as usize + self.rect.x as usize;
+                buf[d..d + row].copy_from_slice(&data[i * row..(i + 1) * row]);
+            }
+        }
+    }
+}
+
+impl Command for MaskPatch {
+    fn label(&self) -> &str {
+        &self.label
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        let data = std::mem::take(&mut self.after);
+        self.write(doc, &data);
+        self.after = data;
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        let data = std::mem::take(&mut self.before);
+        self.write(doc, &data);
+        self.before = data;
+    }
+    fn bytes(&self) -> usize {
+        self.before.len() + self.after.len()
+    }
 }
 
 impl Command for PixelPatch {

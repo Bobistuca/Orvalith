@@ -15,11 +15,11 @@ use flate2::Compression;
 use serde::{Deserialize, Serialize};
 
 use crate::blend::BlendMode;
-use crate::document::{Channel, Document, Guide, Layer, LayerId, LayerKind};
+use crate::document::{Channel, Document, Guide, Layer, LayerId, LayerKind, LayerMask};
 use crate::layerops::normalize;
 
 pub const MAGIC: &[u8; 8] = b"ORVALITH";
-pub const CURRENT_VERSION: u32 = 4;
+pub const CURRENT_VERSION: u32 = 5;
 const MAX_CHANNELS: usize = 256;
 const HEADER_LEN: usize = 20;
 const MAX_MANIFEST: usize = 64 * 1024 * 1024;
@@ -118,6 +118,36 @@ struct LayerEntry {
     lock_position: bool,
     #[serde(default = "yes")]
     expanded: bool,
+    // Versão 5.
+    #[serde(default)]
+    clipped: bool,
+    #[serde(default)]
+    mask: Option<MaskEntry>,
+}
+
+/// Máscara de camada (versão 5): recurso zlib de 1 byte por pixel do documento.
+#[derive(Serialize, Deserialize)]
+struct MaskEntry {
+    offset: u64,
+    stored_len: u64,
+    raw_len: u64,
+    crc32: u32,
+    enabled: bool,
+    linked: bool,
+    density: f32,
+    feather: f32,
+}
+
+fn pack(bytes: &[u8], blob: &mut Vec<u8>) -> Result<(u64, u64, u32), OrvaError> {
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::new(3));
+    enc.write_all(bytes)
+        .map_err(|e| OrvaError::Corrupt(e.to_string()))?;
+    let packed = enc
+        .finish()
+        .map_err(|e| OrvaError::Corrupt(e.to_string()))?;
+    let offset = blob.len() as u64;
+    blob.extend_from_slice(&packed);
+    Ok((offset, packed.len() as u64, crc32fast::hash(bytes)))
 }
 
 fn one() -> f32 {
@@ -170,8 +200,25 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
             lock_alpha: l.lock_alpha,
             lock_position: l.lock_position,
             expanded: l.expanded,
+            clipped: l.clipped,
+            mask: None,
         });
         blob.extend_from_slice(&packed);
+        if let Some(m) = &l.mask {
+            let (offset, stored_len, crc32) = pack(m.data(), &mut blob)?;
+            if let Some(last) = entries.last_mut() {
+                last.mask = Some(MaskEntry {
+                    offset,
+                    stored_len,
+                    raw_len: m.data().len() as u64,
+                    crc32,
+                    enabled: m.enabled,
+                    linked: m.linked,
+                    density: m.density(),
+                    feather: m.feather(),
+                });
+            }
+        }
     }
     let mut channel_entries = Vec::with_capacity(doc.channels.len());
     for c in &doc.channels {
@@ -340,6 +387,32 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         if !e.opacity.is_finite() || !e.fill.is_finite() {
             return Err(OrvaError::Corrupt("opacidade inválida".into()));
         }
+        if let Some(me) = &e.mask {
+            if me.raw_len != channel_len {
+                return Err(OrvaError::Corrupt(format!(
+                    "tamanho da máscara de \"{}\"",
+                    e.name
+                )));
+            }
+            total = total.saturating_add(me.raw_len);
+            if total > MAX_TOTAL_PIXEL_BYTES {
+                return Err(OrvaError::TooLarge(
+                    "máscaras e camadas grandes demais".into(),
+                ));
+            }
+            if me
+                .offset
+                .checked_add(me.stored_len)
+                .is_none_or(|end| end > blob.len() as u64)
+                || !me.density.is_finite()
+                || !me.feather.is_finite()
+            {
+                return Err(OrvaError::Corrupt(format!(
+                    "máscara inválida em \"{}\"",
+                    e.name
+                )));
+            }
+        }
     }
 
     let mut layers = Vec::with_capacity(manifest.layers.len());
@@ -388,6 +461,24 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         layer.lock_alpha = e.lock_alpha;
         layer.lock_position = e.lock_position;
         layer.expanded = e.expanded;
+        layer.clipped = e.clipped;
+        if let Some(me) = &e.mask {
+            let packed = &blob[me.offset as usize..(me.offset + me.stored_len) as usize];
+            let mut data = Vec::with_capacity(me.raw_len as usize);
+            ZlibDecoder::new(packed)
+                .take(me.raw_len + 1)
+                .read_to_end(&mut data)
+                .map_err(|err| OrvaError::Corrupt(format!("máscara de \"{}\": {err}", e.name)))?;
+            if data.len() as u64 != me.raw_len || crc32fast::hash(&data) != me.crc32 {
+                return Err(OrvaError::Corrupt(format!("máscara de \"{}\"", e.name)));
+            }
+            let mut m = LayerMask::new(data);
+            m.enabled = me.enabled;
+            m.linked = me.linked;
+            m.set_density(me.density);
+            m.set_feather(me.feather);
+            layer.mask = Some(m);
+        }
         layers.push(layer);
     }
     let layers = normalize(layers);
@@ -541,6 +632,41 @@ mod tests {
         assert_eq!(back.new_channel_id(), 8);
         // Corrupção no final do blob (canal) é detectada.
         let mut bad = bytes.clone();
+        let last = bad.len() - 1;
+        bad[last] ^= 0xFF;
+        assert!(read(&bad).is_err());
+    }
+
+    #[test]
+    fn masks_clipping_roundtrip_and_validation() {
+        let mut doc = Document::new("m", 4, 3, Some([1, 2, 3, 255])).unwrap();
+        let mut top = Layer::filled("topo", 4, 3, [9, 9, 9, 255]);
+        let mut m = LayerMask::new((0..12).map(|i| (i * 20) as u8).collect());
+        m.enabled = false;
+        m.linked = false;
+        m.set_density(0.5);
+        m.set_feather(2.0);
+        top.mask = Some(m);
+        top.clipped = true;
+        doc.layers.push(top);
+        let bytes = write(&doc).unwrap();
+        let back = read(&bytes).unwrap();
+        assert!(back.layers[0].mask.is_none() && !back.layers[0].clipped);
+        let t = &back.layers[1];
+        assert!(t.clipped);
+        let bm = t.mask.as_ref().unwrap();
+        assert_eq!(
+            **bm.data(),
+            (0..12).map(|i| (i * 20) as u8).collect::<Vec<u8>>()
+        );
+        assert!(!bm.enabled && !bm.linked);
+        assert_eq!((bm.density(), bm.feather()), (0.5, 2.0));
+        assert_eq!(
+            crate::compose::flatten(&back),
+            crate::compose::flatten(&doc)
+        );
+        // Corrupção do último recurso (máscara) é detectada.
+        let mut bad = bytes;
         let last = bad.len() - 1;
         bad[last] ^= 0xFF;
         assert!(read(&bad).is_err());

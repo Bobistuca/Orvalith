@@ -13,15 +13,17 @@ use orvalith_core::{Document, Layer};
 
 use crate::canvas::OpenDoc;
 use geocmds::GeoCmd;
-use selops::{gray, SelCmd};
+use selops::SelCmd;
 
 use crate::canvas::{self, RulerUnit, ViewCmd, ViewOpts};
 use crate::geometry::TMode;
 use crate::layers_ui::{self, LayerCmd};
 use crate::prefs::Prefs;
 use crate::theme;
+use crate::tools::gray;
 use crate::tools::{Tool, ToolState};
 use orvalith_core::docops::{AlignKind, Orient};
+use orvalith_core::maskops::MaskInit;
 
 struct NewDocForm {
     width: u32,
@@ -219,6 +221,19 @@ impl OrvalithApp {
                 }
             }
             Action::Close => self.request_close(self.active),
+            Action::Layer(LayerCmd::RefineMask) => {
+                if let Some(o) = self.docs.get(self.active) {
+                    match o.active_idx().map(|i| &o.doc.layers[i]) {
+                        Some(l) if l.mask.is_some() => {
+                            self.tools.sel.refine = Some((
+                                crate::select::RefineTarget::Mask(l.id),
+                                orvalith_core::maskops::RefineParams::default(),
+                            ));
+                        }
+                        _ => self.tools.notice = Some("A camada ativa não tem máscara.".into()),
+                    }
+                }
+            }
             Action::Layer(LayerCmd::Flatten) => {
                 if !self.docs.is_empty() {
                     self.flatten_prompt = true;
@@ -279,7 +294,8 @@ impl OrvalithApp {
         ctx.input_mut(|i| {
             // Variantes com Shift primeiro: Ctrl+X casaria também com Ctrl+Shift+X.
             let ca = Modifiers::COMMAND.plus(Modifiers::ALT);
-            let table: [Shortcut; 60] = [
+            let table: [Shortcut; 61] = [
+                (ca, Key::G, || Action::Layer(LayerCmd::ToggleClip)),
                 (cs, Key::Semicolon, || Action::Geo(GeoCmd::ToggleSnap)),
                 (ca, Key::I, || Action::Geo(GeoCmd::ImageSize)),
                 (ca, Key::C, || Action::Geo(GeoCmd::CanvasSize)),
@@ -521,7 +537,8 @@ impl eframe::App for OrvalithApp {
                     }
                 });
                 ui.menu_button("Selecionar", |ui| {
-                    let items: [(&str, &str, SelCmd); 8] = [
+                    let items: [(&str, &str, SelCmd); 9] = [
+                        ("Refinar borda…", "", SelCmd::Refine),
                         ("Tudo", "Ctrl+A", SelCmd::All),
                         ("Desmarcar", "Ctrl+D", SelCmd::Deselect),
                         ("Inverter", "Ctrl+Shift+I", SelCmd::Invert),
@@ -546,7 +563,27 @@ impl eframe::App for OrvalithApp {
                     }
                 });
                 ui.menu_button("Camada", |ui| {
-                    let items: [(&str, &str, LayerCmd); 13] = [
+                    let items: [(&str, &str, LayerCmd); 17] = [
+                        (
+                            "Máscara: revelar tudo",
+                            "",
+                            LayerCmd::AddMask(MaskInit::Reveal),
+                        ),
+                        (
+                            "Máscara: ocultar tudo",
+                            "",
+                            LayerCmd::AddMask(MaskInit::Hide),
+                        ),
+                        (
+                            "Máscara: da seleção",
+                            "",
+                            LayerCmd::AddMask(MaskInit::FromSelection),
+                        ),
+                        (
+                            "Recortar na camada abaixo",
+                            "Ctrl+Alt+G",
+                            LayerCmd::ToggleClip,
+                        ),
                         ("Nova camada", "Ctrl+Shift+N", LayerCmd::New),
                         ("Novo grupo", "", LayerCmd::NewGroup),
                         ("Duplicar", "Ctrl+J", LayerCmd::Duplicate),
@@ -834,11 +871,13 @@ impl eframe::App for OrvalithApp {
                     ui.heading("Camadas");
                     ui.separator();
                     let busy = self.tools.is_busy();
-                    if let Some(open) = self.docs.get_mut(self.active) {
-                        for c in layers_ui::show(ui, open, busy) {
-                            actions.push(Action::Layer(c));
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if let Some(open) = self.docs.get_mut(self.active) {
+                            for c in layers_ui::show(ui, open, busy) {
+                                actions.push(Action::Layer(c));
+                            }
                         }
-                    }
+                    });
                 });
         }
 
