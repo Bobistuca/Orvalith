@@ -6,6 +6,7 @@ tags: [orvalith, painel]
 # Painel Orvalith
 
 - [[ROADMAP]] · [[docs/CONTINUITY]] · [[docs/ARCHITECTURE]] · [[docs/FEATURE_MATRIX]]
+- Composição: [[docs/COMPOSITING]] · Formato: [[docs/ORVA_FORMAT]]
 - Decisões: [[docs/decisions/0001-stack]]
 - Testes: [[docs/TESTING]] · [[docs/COMMIT_CHECKLIST]] · [[docs/KNOWN_ISSUES]]
 - Política: [[docs/LOCAL_STORAGE]] · Formatos: [[docs/FORMAT_SUPPORT]] · [[docs/REFERENCES]]

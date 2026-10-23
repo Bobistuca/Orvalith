@@ -13,7 +13,7 @@ Estados: planned · in progress · partial · validated · blocked. Detalhes de 
 | 1 | Aplicativo nativo e área de trabalho (zoom, pan, abas, atalhos) | 0 | partial |
 | 2 | Documentos, arquivos (PNG/JPEG, .orva), histórico, autosave opcional | 1 | partial |
 | 3 | Pintura, apagar, cores | 2 | partial |
-| 4 | Camadas e composição (modos de mesclagem) | 2 | planned |
+| 4 | Camadas e composição (modos de mesclagem) | 2 | partial |
 | 5 | Seleções | 3, 4 | planned |
 | 6 | Transformações e geometria | 5 | planned |
 | 7 | Máscaras, recorte, canais | 5 | planned |

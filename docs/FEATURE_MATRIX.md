@@ -21,7 +21,7 @@ tags: [orvalith, matriz]
 | Salvar/Salvar como/reabrir `.orva` | 2 | partial | testes de `orva.rs` e `io.rs` (ida e volta, corrupção, versão, bomba) | diálogos nativos não exercitados; leitura/gravação na thread da UI |
 | Exportar PNG (alfa) e JPEG (qualidade, fundo) | 2 | partial | testes de `imageio.rs` | sem prévia/tamanho estimado, sem ICC |
 | Escrita atômica | 2 | validated | `fsio.rs`: falha simulada preserva o arquivo anterior | — |
-| Histórico ligado à UI (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y) com visibilidade e opacidade de camada | 2 | partial | testes de `edit.rs`; um arrasto = uma ação | só propriedades de camada existem como ações |
+| Histórico ligado à UI (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y) | 2 | partial | `edit.rs` testes; um arrasto = uma ação | sem painel visual de histórico |
 | Indicador de modificado, confirmação ao fechar aba/sair (Salvar/Descartar/Cancelar) | 2 | partial | código | sem teste automatizado de UI |
 | Autosave/recuperação opcional (desligado por padrão), apagar cópias | 2 | partial | `scan_recovery` testado; cópia em thread | autosave e recuperação ao iniciar não exercitados manualmente |
 | Recentes (opcional, apagável) | 2 | partial | testes de `prefs.rs` | — |
@@ -35,7 +35,20 @@ tags: [orvalith, matriz]
 | Gradientes linear/radial (frente→fundo, frente→transparente, inverter, opacidade) | 3 | partial | `fill.rs` testes (pontas, ponto médio, simetria, degenerado) + Esc cancela | 2 paradas (sem editor de paradas); sem dithering (faixas em 8 bits); histórico guarda a camada inteira |
 | Presets de pincel (padrão + salvos pelo usuário) e amostras persistem | 3 | partial | testes de ida e volta de `prefs.rs` e `paint.rs` | — |
 | Pintura persiste no projeto `.orva` | 3 | partial | teste `painted_pixels_survive_project_roundtrip` | — |
-| Camada ativa + nova camada (desfazível) | 3/4 | partial | `edit.rs` testes | sem renomear/excluir/reordenar (Estágio 4) |
+| Camada ativa + nova camada (desfazível) | 3/4 | validated | `layerops.rs`/`layers_ui.rs` testes | — |
 | Atualização parcial da textura (só a região pintada) | 3 | partial | `compose::flatten_region` testado | custo não medido |
 | Orçamento de memória do histórico (256 MiB) | 3 | partial | teste `budget_drops_oldest_actions` | descarta as ações mais antigas sem aviso |
-| Demais estágios (4–16) | 4–16 | planned | — | ver [[ROADMAP]] |
+| Criar, renomear (duplo clique), duplicar, excluir, reordenar (Subir/Descer) camadas | 4 | partial | `layerops.rs` + `layers_ui.rs` testes; cada operação = 1 ação de histórico | reordenar só por botões (sem arrastar); painel não exercitado com mouse |
+| Grupos aninhados (agrupar, desagrupar, expandir/recolher, oculto/opacidade/modo) | 4 | partial | testes de `layerops.rs` e `compose.rs` | sem arrastar camadas para dentro/fora de grupos |
+| Seleção múltipla (Ctrl/Shift+clique) | 4 | partial | `layers_ui.rs` | só uso por mesclar/agrupar/duplicar/excluir/mover/copiar |
+| Bloqueios de posição, pixels e transparência | 4 | partial | testes de `paint.rs`, `fill.rs` e `tools.rs` | bloqueio de pixels vale para pincel/borracha/balde/gradiente (não para o Mover) |
+| Opacidade e preenchimento separados | 4 | partial | `compose.rs` teste | idênticos até haver estilos de camada (Estágio 11) |
+| 25 modos de mesclagem + passar através (grupos) | 4 | partial | `blend.rs` (fórmulas, identidades, faixa, não separáveis) e `compose.rs` | espaço sRGB codificado; sem comparação com outro programa; ver [[docs/COMPOSITING]] |
+| Mesclar selecionadas, mesclar visíveis, achatar (com confirmação) | 4 | partial | testes de `layerops.rs` | difere do "mesclar para baixo" de referência com modos ≠ Normal |
+| Ferramenta Mover (V) com preview e 1 ação; Esc cancela | 4 | partial | `tools.rs` testes | desloca pixels no buffer: o que sai da imagem é perdido (sem deslocamento por camada) |
+| Copiar/colar camadas entre documentos (Ctrl+C/V, área interna) | 4 | partial | testes de `layerops.rs` e `layers_ui.rs` | não usa a área de transferência do sistema; colar centraliza se os tamanhos diferem |
+| Miniaturas atualizadas | 4 | partial | teste de amostragem | adiadas durante traço; amostragem por vizinho mais próximo |
+| Isolamento temporário de visibilidade (Alt+clique no olho) | 4 | partial | `compose.rs` teste | fora do histórico e do arquivo |
+| Projeto `.orva` v2 (grupos, modos, bloqueios, preenchimento) lê também v1 | 4 | partial | testes de `orva.rs` | ver [[docs/ORVA_FORMAT]] |
+| Comparação CPU×GPU de composição | 4 | blocked | — | não existe compositor GPU ainda |
+| Demais estágios (5–16) | 5–16 | planned | — | ver [[ROADMAP]] |

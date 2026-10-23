@@ -24,5 +24,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Pintura (Estágio 3)
 [paint.rs](../crates/orvalith-core/src/paint.rs): `StrokeSession` carimba discos espaçados ao longo do caminho; cobertura do traço em buffer próprio (fluxo por carimbo) e opacidade aplicada uma vez sobre o original da camada; no fim vira um `PixelPatch` (uma ação). [fill.rs](../crates/orvalith-core/src/fill.rs): balde (varredura por linhas) e gradientes. [tools.rs](../crates/orvalith/src/tools.rs) interpreta a entrada; [canvas.rs](../crates/orvalith/src/canvas.rs) devolve eventos de ponteiro (todas as amostras do quadro, em coordenadas do documento) e atualiza a textura só na região alterada (`mark_dirty`/`record_patch`).
 
+## Camadas (Estágio 4)
+`Layer.pixels` é `Arc<Vec<u8>>` (copy-on-write via `pixels_mut`): clonar a lista de camadas é barato, e `edit::LayersEdit` guarda antes/depois da lista inteira — operações estruturais (agrupar, mesclar, mover, renomear, bloqueios…) são uma ação cada, e só buffers novos contam para o orçamento do histórico. [layerops.rs](../crates/orvalith-core/src/layerops.rs) são funções puras que devolvem a nova lista (invariante: pré-ordem, `normalize`). Detalhes de composição em [[docs/COMPOSITING]]. UI: [layers_ui.rs](../crates/orvalith/src/layers_ui.rs).
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

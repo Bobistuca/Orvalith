@@ -6,6 +6,9 @@ Comandos em [[CLAUDE]] e [[docs/COMMIT_CHECKLIST]].
 - Manual (UI): `cargo run -p orvalith` → "Novo documento" → criar 1920×1080 → ver xadrez/fundo branco; Ctrl+N abre o diálogo.
 - Última execução registrada: ver [[docs/CONTINUITY]].
 
+## Estágio 4 (2026-10-23)
+fmt, clippy, 112 testes e build release OK; smoke test abre/fecha. Manual: duas camadas com cores diferentes → trocar o modo (Multiplicar, Tela, Luminosidade…) e conferir a mudança; Ctrl+clique para selecionar várias → Ctrl+G agrupa, Ctrl+Shift+G desagrupa, Ctrl+E mescla; Alt+clique no olho isola; duplo clique renomeia; V move (Esc cancela); Ctrl+C num documento e Ctrl+V em outro; salvar `.orva`, reabrir e conferir grupos/modos/bloqueios; Camada → Achatar pede confirmação.
+
 ## Estágio 3 (2026-10-23)
 fmt, clippy, 70 testes e build release OK; smoke test abre/fecha. Manual: Ctrl+N → B (pincel): arrastar rápido em círculos, conferir ausência de lacunas e que Ctrl+Z desfaz o traço inteiro; [ e ] mudam o tamanho; E apaga; I amostra (Alt = fundo); G balde (Tolerância/Contíguo); Shift+G gradiente (Esc cancela durante o arrasto); X troca cores, D restaura; salvar preset e reiniciar o app; salvar `.orva`, reabrir e comparar a pintura; testar em zoom 25%, 100% e 800%.
 
