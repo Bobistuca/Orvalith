@@ -7,10 +7,11 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 use eframe::egui::{self, Key, Modifiers};
-use orvalith_core::edit::{AddLayer, SetOpacity, SetVisible};
-use orvalith_core::{Document, Layer, LayerId};
+use orvalith_core::{Document, Layer};
 
-use crate::canvas::{self, OpenDoc, ViewCmd};
+use crate::canvas::OpenDoc;
+use crate::canvas::{self, ViewCmd};
+use crate::layers_ui::{self, LayerCmd};
 use crate::prefs::Prefs;
 use crate::theme;
 use crate::tools::{Tool, ToolState};
@@ -49,6 +50,7 @@ enum Action {
     DefaultColors,
     BrushSize(f32),
     CancelTool,
+    Layer(LayerCmd),
 }
 
 pub struct OrvalithApp {
@@ -70,6 +72,8 @@ pub struct OrvalithApp {
     last_title: String,
     tools: ToolState,
     layer_counter: u32,
+    layer_clip: Vec<Layer>,
+    flatten_prompt: bool,
     last_autosave: Instant,
     autosave_tx: mpsc::Sender<String>,
     autosave_rx: mpsc::Receiver<String>,
@@ -98,6 +102,8 @@ impl OrvalithApp {
             last_title: String::new(),
             tools,
             layer_counter: 1,
+            layer_clip: Vec::new(),
+            flatten_prompt: false,
             last_autosave: Instant::now(),
             autosave_tx,
             autosave_rx,
@@ -190,6 +196,20 @@ impl OrvalithApp {
                 }
             }
             Action::Close => self.request_close(self.active),
+            Action::Layer(LayerCmd::Flatten) => {
+                if !self.docs.is_empty() {
+                    self.flatten_prompt = true;
+                }
+            }
+            Action::Layer(cmd) => {
+                if self.tools.is_busy() {
+                    return;
+                }
+                if let Some(open) = self.docs.get_mut(self.active) {
+                    self.tools.notice =
+                        layers_ui::run(open, cmd, &mut self.layer_clip, &mut self.layer_counter);
+                }
+            }
             Action::Undo => self.undo_redo(false),
             Action::Redo => self.undo_redo(true),
             Action::View(c) => *view_cmd = Some(c),
@@ -223,7 +243,9 @@ impl OrvalithApp {
         let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
         ctx.input_mut(|i| {
             // Variantes com Shift primeiro: Ctrl+X casaria também com Ctrl+Shift+X.
-            let table: [Shortcut; 28] = [
+            let table: [Shortcut; 37] = [
+                (cs, Key::N, || Action::Layer(LayerCmd::New)),
+                (cs, Key::G, || Action::Layer(LayerCmd::Ungroup)),
                 (cs, Key::S, || Action::SaveAs),
                 (cs, Key::E, || Action::Export),
                 (cs, Key::Z, || Action::Redo),
@@ -242,6 +264,15 @@ impl OrvalithApp {
                 (C, Key::F4, || Action::Close),
                 (Modifiers::NONE, Key::F5, || Action::View(ViewCmd::Fit)),
                 // Ferramentas (Shift+G antes de G).
+                (C, Key::J, || Action::Layer(LayerCmd::Duplicate)),
+                (C, Key::G, || Action::Layer(LayerCmd::Group)),
+                (C, Key::E, || Action::Layer(LayerCmd::MergeSelected)),
+                (C, Key::CloseBracket, || Action::Layer(LayerCmd::Up)),
+                (C, Key::OpenBracket, || Action::Layer(LayerCmd::Down)),
+                (Modifiers::NONE, Key::Delete, || {
+                    Action::Layer(LayerCmd::Delete)
+                }),
+                (Modifiers::NONE, Key::V, || Action::Tool(Tool::Move)),
                 (Modifiers::SHIFT, Key::G, || Action::Tool(Tool::Gradient)),
                 (Modifiers::NONE, Key::B, || Action::Tool(Tool::Brush)),
                 (Modifiers::NONE, Key::N, || Action::Tool(Tool::Pencil)),
@@ -259,6 +290,16 @@ impl OrvalithApp {
             for (m, k, make) in table {
                 if i.consume_key(m, k) {
                     actions.push(make());
+                }
+            }
+            // O egui-winit converte Ctrl+C/Ctrl+V em eventos próprios (sem evento de tecla).
+            for e in &i.events {
+                match e {
+                    egui::Event::Copy => actions.push(Action::Layer(LayerCmd::Copy)),
+                    egui::Event::Paste(_) | egui::Event::PasteImage(_) => {
+                        actions.push(Action::Layer(LayerCmd::Paste));
+                    }
+                    _ => {}
                 }
             }
         });
@@ -377,6 +418,32 @@ impl eframe::App for OrvalithApp {
                         ui.close();
                     }
                 });
+                ui.menu_button("Camada", |ui| {
+                    let items: [(&str, &str, LayerCmd); 13] = [
+                        ("Nova camada", "Ctrl+Shift+N", LayerCmd::New),
+                        ("Novo grupo", "", LayerCmd::NewGroup),
+                        ("Duplicar", "Ctrl+J", LayerCmd::Duplicate),
+                        ("Excluir", "Delete", LayerCmd::Delete),
+                        ("Agrupar seleção", "Ctrl+G", LayerCmd::Group),
+                        ("Desagrupar", "Ctrl+Shift+G", LayerCmd::Ungroup),
+                        ("Subir", "Ctrl+]", LayerCmd::Up),
+                        ("Descer", "Ctrl+[", LayerCmd::Down),
+                        ("Mesclar selecionadas", "Ctrl+E", LayerCmd::MergeSelected),
+                        ("Mesclar visíveis", "", LayerCmd::MergeVisible),
+                        ("Achatar imagem…", "", LayerCmd::Flatten),
+                        ("Copiar camadas", "Ctrl+C", LayerCmd::Copy),
+                        ("Colar camadas", "Ctrl+V", LayerCmd::Paste),
+                    ];
+                    for (label, sc, cmd) in &items {
+                        if ui
+                            .add_enabled(has_doc, egui::Button::new(*label).shortcut_text(*sc))
+                            .clicked()
+                        {
+                            actions.push(Action::Layer(*cmd));
+                            ui.close();
+                        }
+                    }
+                });
                 ui.menu_button("Visualizar", |ui| {
                     let items = [
                         ("Ajustar à janela", "Ctrl+0", ViewCmd::Fit),
@@ -475,29 +542,15 @@ impl eframe::App for OrvalithApp {
 
             egui::Panel::right("layers")
                 .resizable(true)
-                .default_size(230.0)
+                .default_size(270.0)
                 .show(root, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.heading("Camadas");
-                        if ui.button("Nova camada").clicked() {
-                            if let Some(open) = self.docs.get_mut(self.active) {
-                                self.layer_counter += 1;
-                                let layer = Layer::transparent(
-                                    format!("Camada {}", self.layer_counter),
-                                    open.doc.width,
-                                    open.doc.height,
-                                );
-                                let id = layer.id;
-                                let at = open.active_idx().map_or(0, |i| i + 1);
-                                open.history
-                                    .execute(&mut open.doc, Box::new(AddLayer::new(layer, at)));
-                                open.active_layer = id;
-                            }
-                        }
-                    });
+                    ui.heading("Camadas");
                     ui.separator();
+                    let busy = self.tools.is_busy();
                     if let Some(open) = self.docs.get_mut(self.active) {
-                        layers_panel(ui, open);
+                        for c in layers_ui::show(ui, open, busy) {
+                            actions.push(Action::Layer(c));
+                        }
                     }
                 });
         }
@@ -550,71 +603,6 @@ impl eframe::App for OrvalithApp {
         self.autosave_tick(&ctx);
         self.update_title(&ctx);
         self.show_dialogs(&ctx);
-    }
-}
-
-/// Lista de camadas (mais alta primeiro) com visibilidade e opacidade, ligadas ao histórico.
-fn layers_panel(ui: &mut egui::Ui, open: &mut OpenDoc) {
-    let OpenDoc {
-        doc,
-        history,
-        opacity_drag,
-        active_layer,
-        ..
-    } = open;
-    let active_id = *active_layer;
-    let mut select: Option<LayerId> = None;
-    let mut vis_change: Option<(LayerId, bool, bool)> = None;
-    let mut commit: Option<(LayerId, f32, f32)> = None;
-    let mut preview = false;
-    for layer in doc.layers.iter_mut().rev() {
-        ui.horizontal(|ui| {
-            let mut v = layer.visible;
-            if ui.checkbox(&mut v, "").on_hover_text("Visível").changed() {
-                vis_change = Some((layer.id, layer.visible, v));
-            }
-            if ui
-                .selectable_label(layer.id == active_id, &layer.name)
-                .clicked()
-            {
-                select = Some(layer.id);
-            }
-        });
-        let old = layer.opacity;
-        let mut pct = old * 100.0;
-        let r = ui.add(
-            egui::Slider::new(&mut pct, 0.0..=100.0)
-                .suffix("%")
-                .integer(),
-        );
-        if r.changed() {
-            if opacity_drag.is_none() {
-                *opacity_drag = Some((layer.id, old));
-            }
-            layer.opacity = pct / 100.0;
-            preview = true;
-        }
-        // Um arrasto (ou ajuste por teclado) vira uma única ação no histórico.
-        if r.drag_stopped() || (r.changed() && !r.dragged()) {
-            if let Some((lid, o)) = opacity_drag.take() {
-                if (o - layer.opacity).abs() > 1e-6 {
-                    commit = Some((lid, o, layer.opacity));
-                }
-            }
-        }
-        ui.separator();
-    }
-    if let Some(id) = select {
-        *active_layer = id;
-    }
-    if preview {
-        doc.touch();
-    }
-    if let Some((layer, old, new)) = vis_change {
-        history.execute(doc, Box::new(SetVisible { layer, old, new }));
-    }
-    if let Some((layer, old, new)) = commit {
-        history.record(doc, Box::new(SetOpacity { layer, old, new }));
     }
 }
 
@@ -744,6 +732,33 @@ impl OrvalithApp {
                 self.pending_close = None;
             } else if cancel {
                 self.pending_close = None;
+            }
+        }
+
+        if self.flatten_prompt {
+            let (mut yes, mut no) = (false, false);
+            egui::Window::new("Achatar imagem")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("Todas as camadas visíveis serão mescladas em uma só. Camadas ocultas serão descartadas. Dá para desfazer com Ctrl+Z.");
+                    ui.horizontal(|ui| {
+                        yes = ui.button("Achatar").clicked();
+                        no = ui.button("Cancelar").clicked();
+                    });
+                });
+            if yes {
+                if let Some(open) = self.docs.get_mut(self.active) {
+                    self.tools.notice = layers_ui::run(
+                        open,
+                        LayerCmd::Flatten,
+                        &mut self.layer_clip,
+                        &mut self.layer_counter,
+                    );
+                }
+            }
+            if yes || no {
+                self.flatten_prompt = false;
             }
         }
 

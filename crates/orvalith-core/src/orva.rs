@@ -14,10 +14,12 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use serde::{Deserialize, Serialize};
 
-use crate::document::{Document, Layer, LayerId};
+use crate::blend::BlendMode;
+use crate::document::{Document, Layer, LayerId, LayerKind};
+use crate::layerops::normalize;
 
 pub const MAGIC: &[u8; 8] = b"ORVALITH";
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 2;
 const HEADER_LEN: usize = 20;
 const MAX_MANIFEST: usize = 64 * 1024 * 1024;
 const MAX_LAYERS: usize = 10_000;
@@ -76,6 +78,39 @@ struct LayerEntry {
     stored_len: u64,
     raw_len: u64,
     crc32: u32,
+    // Campos da versão 2 (ausentes em arquivos v1: valores padrão).
+    #[serde(default)]
+    kind: EntryKind,
+    #[serde(default)]
+    parent: Option<u64>,
+    #[serde(default)]
+    blend: BlendMode,
+    #[serde(default = "one")]
+    fill: f32,
+    #[serde(default)]
+    lock_pixels: bool,
+    #[serde(default)]
+    lock_alpha: bool,
+    #[serde(default)]
+    lock_position: bool,
+    #[serde(default = "yes")]
+    expanded: bool,
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+enum EntryKind {
+    #[default]
+    Raster,
+    Group,
 }
 
 /// Serializa o documento (camadas, propriedades e pixels) para bytes `.orva`.
@@ -100,6 +135,18 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
             stored_len: packed.len() as u64,
             raw_len: l.pixels.len() as u64,
             crc32: crc32fast::hash(&l.pixels),
+            kind: if l.is_group() {
+                EntryKind::Group
+            } else {
+                EntryKind::Raster
+            },
+            parent: l.parent.map(|p| p.0),
+            blend: l.blend,
+            fill: l.fill,
+            lock_pixels: l.lock_pixels,
+            lock_alpha: l.lock_alpha,
+            lock_position: l.lock_position,
+            expanded: l.expanded,
         });
         blob.extend_from_slice(&packed);
     }
@@ -177,7 +224,13 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
     let mut total: u64 = 0;
     let mut seen = HashSet::new();
     for e in &manifest.layers {
-        if !side_ok(e.width) || !side_ok(e.height) {
+        let is_group = e.kind == EntryKind::Group;
+        let dims_ok = if is_group {
+            e.width == 0 && e.height == 0
+        } else {
+            side_ok(e.width) && side_ok(e.height)
+        };
+        if !dims_ok {
             return Err(OrvaError::Corrupt(format!(
                 "dimensões da camada \"{}\"",
                 e.name
@@ -207,7 +260,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         if !seen.insert(e.id) {
             return Err(OrvaError::Corrupt("IDs de camada duplicados".into()));
         }
-        if !e.opacity.is_finite() {
+        if !e.opacity.is_finite() || !e.fill.is_finite() {
             return Err(OrvaError::Corrupt("opacidade inválida".into()));
         }
     }
@@ -233,16 +286,34 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
                 e.name
             )));
         }
-        layers.push(Layer {
-            id: LayerId(e.id),
-            name: e.name.clone(),
-            visible: e.visible,
-            opacity: e.opacity.clamp(0.0, 1.0),
-            width: e.width,
-            height: e.height,
-            pixels,
-        });
+        let group = e.kind == EntryKind::Group;
+        let mut layer = if group {
+            Layer::group(e.name.clone())
+        } else {
+            Layer::from_pixels(e.name.clone(), e.width, e.height, pixels)
+        };
+        layer.id = LayerId(e.id);
+        layer.kind = if group {
+            LayerKind::Group
+        } else {
+            LayerKind::Raster
+        };
+        layer.parent = e.parent.map(LayerId);
+        layer.visible = e.visible;
+        layer.opacity = e.opacity.clamp(0.0, 1.0);
+        layer.fill = e.fill.clamp(0.0, 1.0);
+        layer.blend = if group || e.blend != BlendMode::PassThrough {
+            e.blend
+        } else {
+            BlendMode::Normal
+        };
+        layer.lock_pixels = e.lock_pixels;
+        layer.lock_alpha = e.lock_alpha;
+        layer.lock_position = e.lock_position;
+        layer.expanded = e.expanded;
+        layers.push(layer);
     }
+    let layers = normalize(layers);
     Ok(Document::from_parts(
         manifest.name,
         manifest.width,
@@ -281,8 +352,75 @@ mod tests {
             assert_eq!(a.visible, b.visible);
             assert_eq!(a.opacity, b.opacity);
             assert_eq!(a.pixels, b.pixels);
+            assert_eq!((a.fill, a.blend), (b.fill, b.blend));
         }
         assert!(!back.modified);
+    }
+
+    #[test]
+    fn groups_blend_locks_roundtrip() {
+        let mut doc = Document::new("g", 3, 3, Some([1, 2, 3, 255])).unwrap();
+        let mut g = Layer::group("Meu grupo");
+        g.opacity = 0.7;
+        g.expanded = false;
+        let gid = g.id;
+        let mut child = Layer::filled("filho", 3, 3, [9, 9, 9, 255]);
+        child.parent = Some(gid);
+        child.blend = BlendMode::Overlay;
+        child.fill = 0.25;
+        child.lock_alpha = true;
+        child.lock_position = true;
+        doc.layers.extend([g, child]);
+        let back = read(&write(&doc).unwrap()).unwrap();
+        assert_eq!(back.layers.len(), 3);
+        let (bg, bc) = (&back.layers[1], &back.layers[2]);
+        assert!(bg.is_group() && !bg.expanded && bg.opacity == 0.7);
+        assert_eq!(bg.blend, BlendMode::PassThrough);
+        assert_eq!(bc.parent, Some(gid));
+        assert_eq!(bc.blend, BlendMode::Overlay);
+        assert_eq!(bc.fill, 0.25);
+        assert!(bc.lock_alpha && bc.lock_position && !bc.lock_pixels);
+        assert_eq!(
+            crate::compose::flatten(&back),
+            crate::compose::flatten(&doc)
+        );
+    }
+
+    #[test]
+    fn reads_version_1_files_without_new_fields() {
+        let px = vec![5u8, 6, 7, 255];
+        let mut enc = ZlibEncoder::new(Vec::new(), Compression::new(3));
+        enc.write_all(&px).unwrap();
+        let packed = enc.finish().unwrap();
+        let manifest = serde_json::json!({
+            "format": "orvalith-project", "app_version": "0.0.1", "name": "antigo",
+            "width": 1, "height": 1, "ppi": 72.0,
+            "layers": [{"id": 77, "name": "Fundo", "visible": true, "opacity": 0.5,
+                "width": 1, "height": 1, "offset": 0, "stored_len": packed.len(),
+                "raw_len": 4, "crc32": crc32fast::hash(&px)}]
+        });
+        let json = serde_json::to_vec(&manifest).unwrap();
+        let mut out = MAGIC.to_vec();
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        out.extend_from_slice(&crc32fast::hash(&json).to_le_bytes());
+        out.extend_from_slice(&json);
+        out.extend_from_slice(&packed);
+        let doc = read(&out).unwrap();
+        let l = &doc.layers[0];
+        assert_eq!(
+            (l.opacity, l.fill, l.blend, l.visible),
+            (0.5, 1.0, BlendMode::Normal, true)
+        );
+        assert_eq!(l.pixel(0, 0), Some([5, 6, 7, 255]));
+    }
+
+    #[test]
+    fn repairs_unknown_parent_on_load() {
+        let mut doc = Document::new("g", 2, 2, Some([1, 2, 3, 255])).unwrap();
+        doc.layers[0].parent = Some(LayerId(424242));
+        let back = read(&write(&doc).unwrap()).unwrap();
+        assert_eq!(back.layers[0].parent, None);
     }
 
     #[test]

@@ -1,4 +1,6 @@
-//! Comandos de edição: propriedades de camada, camadas novas e retalhos de pixels.
+//! Comandos de edição: propriedades de camada, edições estruturais e retalhos de pixels.
+
+use std::sync::Arc;
 
 use crate::document::{Document, Layer, LayerId};
 use crate::geom::Rect;
@@ -54,40 +56,43 @@ impl Command for SetOpacity {
     }
 }
 
-/// Insere uma camada na posição `index` da pilha.
-pub struct AddLayer {
-    layer: Option<Layer>,
-    id: LayerId,
-    index: usize,
+/// Troca a lista inteira de camadas (estrutura, propriedades, mesclagem, mover…).
+/// Os pixels são compartilhados por `Arc`, então o instantâneo é barato e só buffers
+/// realmente novos contam para o orçamento do histórico.
+pub struct LayersEdit {
+    label: String,
+    before: Vec<Layer>,
+    after: Vec<Layer>,
 }
 
-impl AddLayer {
-    pub fn new(layer: Layer, index: usize) -> Self {
+impl LayersEdit {
+    pub fn new(label: &str, before: Vec<Layer>, after: Vec<Layer>) -> Self {
         Self {
-            id: layer.id,
-            layer: Some(layer),
-            index,
+            label: label.to_string(),
+            before,
+            after,
         }
     }
 }
 
-impl Command for AddLayer {
+impl Command for LayersEdit {
     fn label(&self) -> &str {
-        "Nova camada"
+        &self.label
     }
     fn apply(&mut self, doc: &mut Document) {
-        if let Some(l) = self.layer.take() {
-            let at = self.index.min(doc.layers.len());
-            doc.layers.insert(at, l);
-        }
+        doc.layers = self.after.clone();
     }
     fn revert(&mut self, doc: &mut Document) {
-        if let Some(p) = doc.layers.iter().position(|l| l.id == self.id) {
-            self.layer = Some(doc.layers.remove(p));
-        }
+        doc.layers = self.before.clone();
     }
     fn bytes(&self) -> usize {
-        self.layer.as_ref().map_or(0, |l| l.pixels.len())
+        let unique = |a: &[Layer], b: &[Layer]| -> usize {
+            a.iter()
+                .filter(|l| !b.iter().any(|o| Arc::ptr_eq(&o.pixels, &l.pixels)))
+                .map(|l| l.pixels.len())
+                .sum()
+        };
+        unique(&self.after, &self.before) + unique(&self.before, &self.after)
     }
 }
 
@@ -138,7 +143,8 @@ impl PixelPatch {
     fn write(&self, doc: &mut Document, data: &[u8]) {
         if let Some(l) = layer_mut(doc, self.layer) {
             if self.rect.right() <= l.width && self.rect.bottom() <= l.height {
-                write_rect(&mut l.pixels, l.width, self.rect, data);
+                let w = l.width;
+                write_rect(l.pixels_mut(), w, self.rect, data);
             }
         }
     }
@@ -209,17 +215,20 @@ mod tests {
     }
 
     #[test]
-    fn add_layer_undo_redo_keeps_identity() {
-        let mut doc = Document::new("t", 2, 2, Some([1, 2, 3, 255])).unwrap();
-        let layer = Layer::transparent("Nova", 2, 2);
-        let id = layer.id;
+    fn layers_edit_counts_only_new_buffers() {
+        let mut doc = Document::new("t", 4, 4, Some([1, 2, 3, 255])).unwrap();
+        let before = doc.layers.clone();
+        let mut after = before.clone();
+        after.push(Layer::transparent("Nova", 4, 4));
+        after[0].name = "Renomeada".into();
+        let e = LayersEdit::new("x", before, after);
+        assert_eq!(e.bytes(), 4 * 4 * 4); // só o buffer da camada nova
         let mut h = History::new();
-        h.execute(&mut doc, Box::new(AddLayer::new(layer, 1)));
+        h.execute(&mut doc, Box::new(e));
         assert_eq!(doc.layers.len(), 2);
         h.undo(&mut doc);
         assert_eq!(doc.layers.len(), 1);
-        h.redo(&mut doc);
-        assert_eq!(doc.layers[1].id, id);
+        assert_eq!(doc.layers[0].name, "Fundo");
     }
 
     #[test]

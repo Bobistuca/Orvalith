@@ -3,6 +3,7 @@
 //! Convenções: coordenadas em pixels do documento (independentes de zoom/DPI);
 //! pixels RGBA8 sRGB com alfa **não pré-multiplicado** (ver docs/ARCHITECTURE.md).
 
+pub mod blend;
 pub mod compose;
 pub mod document;
 pub mod edit;
@@ -11,10 +12,12 @@ pub mod fsio;
 pub mod geom;
 pub mod history;
 pub mod imageio;
+pub mod layerops;
 pub mod orva;
 pub mod paint;
 pub mod view;
 
-pub use document::{Document, DocumentId, Layer, LayerId};
+pub use blend::BlendMode;
+pub use document::{Document, DocumentId, Layer, LayerId, LayerKind};
 pub use geom::Rect;
 pub use history::{Command, History};

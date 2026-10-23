@@ -3,17 +3,21 @@
 //! Toda a lógica de pixels está em `orvalith-core`; aqui apenas se interpreta a entrada do
 //! ponteiro e se conectam traço, balde e gradiente ao histórico do documento.
 
+use std::sync::Arc;
+
 use eframe::egui;
 use orvalith_core::edit::PixelPatch;
 use orvalith_core::fill::{bucket_fill, Gradient, GradientKind};
 use orvalith_core::geom::Rect;
+use orvalith_core::layerops;
 use orvalith_core::paint::{builtin_presets, BrushParams, BrushPreset, StrokeMode, StrokeSession};
-use orvalith_core::{compose, DocumentId, LayerId};
+use orvalith_core::{compose, DocumentId, Layer, LayerId};
 
 use crate::canvas::{CanvasOut, OpenDoc, Overlay};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tool {
+    Move,
     Brush,
     Pencil,
     Eraser,
@@ -23,7 +27,8 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub const ALL: [Tool; 6] = [
+    pub const ALL: [Tool; 7] = [
+        Tool::Move,
         Tool::Brush,
         Tool::Pencil,
         Tool::Eraser,
@@ -34,6 +39,7 @@ impl Tool {
 
     pub fn label(self) -> &'static str {
         match self {
+            Tool::Move => "Mover",
             Tool::Brush => "Pincel",
             Tool::Pencil => "Lápis",
             Tool::Eraser => "Borracha",
@@ -45,6 +51,7 @@ impl Tool {
 
     pub fn shortcut(self) -> &'static str {
         match self {
+            Tool::Move => "V",
             Tool::Brush => "B",
             Tool::Pencil => "N",
             Tool::Eraser => "E",
@@ -74,9 +81,16 @@ enum Active {
     Gradient {
         doc: DocumentId,
         layer: LayerId,
-        original: Vec<u8>,
+        original: Arc<Vec<u8>>,
         start: (f32, f32),
         drawn: bool,
+    },
+    Move {
+        doc: DocumentId,
+        before: Vec<Layer>,
+        targets: Vec<LayerId>,
+        start: (f32, f32),
+        delta: (i32, i32),
     },
 }
 
@@ -117,6 +131,19 @@ const PALETTE: [[u8; 4]; 16] = [
     [120, 80, 50, 255],
     [30, 40, 60, 255],
 ];
+
+/// Motivo pelo qual a camada não pode receber pintura, se houver.
+fn paint_blocked(l: &Layer) -> Option<String> {
+    if l.is_group() {
+        Some("Selecione uma camada raster (não um grupo) para pintar.".into())
+    } else if !l.visible {
+        Some("A camada ativa está oculta.".into())
+    } else if l.lock_pixels {
+        Some("Os pixels da camada ativa estão bloqueados.".into())
+    } else {
+        None
+    }
+}
 
 fn to32(c: [u8; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
@@ -198,17 +225,24 @@ impl ToolState {
 
     /// Cancela um gradiente em andamento restaurando os pixels originais (tecla Esc).
     pub fn cancel(&mut self, open: &mut OpenDoc) {
-        if let Some(Active::Gradient {
-            layer, original, ..
-        }) = self.active.take()
-        {
-            if let Some(l) = open.doc.layers.iter_mut().find(|l| l.id == layer) {
-                if l.pixels.len() == original.len() {
-                    l.pixels = original;
-                    let r = Rect::full(l.width, l.height);
-                    open.mark_dirty(r);
+        match self.active.take() {
+            Some(Active::Gradient {
+                layer, original, ..
+            }) => {
+                if let Some(l) = open.doc.layers.iter_mut().find(|l| l.id == layer) {
+                    if l.pixels.len() == original.len() {
+                        l.pixels = original;
+                        let r = Rect::full(l.width, l.height);
+                        open.mark_dirty(r);
+                    }
                 }
             }
+            Some(Active::Move { before, .. }) => {
+                open.doc.layers = before;
+                let r = Rect::full(open.doc.width, open.doc.height);
+                open.mark_dirty(r);
+            }
+            other => self.active = other,
         }
     }
 
@@ -216,17 +250,89 @@ impl ToolState {
     pub fn handle(&mut self, open: &mut OpenDoc, out: &CanvasOut) {
         let doc_id = open.doc.id;
         let foreign = match &self.active {
-            Some(Active::Stroke { doc, .. }) | Some(Active::Gradient { doc, .. }) => *doc != doc_id,
+            Some(Active::Stroke { doc, .. })
+            | Some(Active::Gradient { doc, .. })
+            | Some(Active::Move { doc, .. }) => *doc != doc_id,
             None => false,
         };
         if foreign {
             self.active = None;
         }
         match self.tool {
+            Tool::Move => self.handle_move(open, out),
             Tool::Brush | Tool::Pencil | Tool::Eraser => self.handle_stroke(open, out),
             Tool::Eyedropper => self.handle_eyedropper(open, out),
             Tool::Bucket => self.handle_bucket(open, out),
             Tool::Gradient => self.handle_gradient(open, out),
+        }
+    }
+
+    fn handle_move(&mut self, open: &mut OpenDoc, out: &CanvasOut) {
+        if let Some(p) = out.pressed {
+            let sel = open.selection_ids();
+            let unlocked: Vec<LayerId> = sel
+                .into_iter()
+                .filter(|id| open.doc.layer(*id).is_some_and(|l| !l.lock_position))
+                .collect();
+            let targets: Vec<LayerId> = layerops::movable_rasters(&open.doc, &unlocked)
+                .into_iter()
+                .filter(|id| {
+                    open.doc
+                        .layer(*id)
+                        .is_some_and(|l| !l.lock_position && !l.lock_pixels)
+                })
+                .collect();
+            if targets.is_empty() {
+                self.notice =
+                    Some("Nenhuma camada movível (bloqueada, vazia ou grupo sem camadas).".into());
+                return;
+            }
+            self.notice = None;
+            self.active = Some(Active::Move {
+                doc: open.doc.id,
+                before: open.doc.layers.clone(),
+                targets,
+                start: (p[0], p[1]),
+                delta: (0, 0),
+            });
+        }
+        if let Some(Active::Move {
+            before,
+            targets,
+            start,
+            delta,
+            ..
+        }) = self.active.as_mut()
+        {
+            if let Some(m) = out.moves.last() {
+                let d = (
+                    (m[0] - start.0).round() as i32,
+                    (m[1] - start.1).round() as i32,
+                );
+                if d != *delta {
+                    *delta = d;
+                    for id in targets.iter() {
+                        let (Some(orig), Some(cur)) =
+                            (before.iter().find(|l| l.id == *id), open.doc.layer_mut(*id))
+                        else {
+                            continue;
+                        };
+                        cur.pixels = Arc::new(layerops::shifted_pixels(orig, d.0, d.1));
+                    }
+                    let r = Rect::full(open.doc.width, open.doc.height);
+                    open.mark_dirty(r);
+                }
+            }
+        }
+        if (out.released || !out.down) && matches!(self.active, Some(Active::Move { .. })) {
+            if let Some(Active::Move { before, delta, .. }) = self.active.take() {
+                if delta == (0, 0) {
+                    open.doc.layers = before;
+                } else {
+                    let r = Rect::full(open.doc.width, open.doc.height);
+                    open.record_layers("Mover camada", before, r);
+                }
+            }
         }
     }
 
@@ -238,8 +344,8 @@ impl ToolState {
         };
         if let Some(p) = out.pressed {
             let Some(idx) = open.active_idx() else { return };
-            if !open.doc.layers[idx].visible {
-                self.notice = Some("A camada ativa está oculta.".into());
+            if let Some(msg) = paint_blocked(&open.doc.layers[idx]) {
+                self.notice = Some(msg);
                 return;
             }
             self.notice = None;
@@ -248,14 +354,18 @@ impl ToolState {
                 Tool::Eraser => (StrokeMode::Erase, false, "Borracha"),
                 _ => (StrokeMode::Paint, false, "Pincel"),
             };
-            let mut session = Box::new(StrokeSession::begin(
-                &open.doc.layers[idx],
-                self.brush,
-                self.fg,
-                mode,
-                pencil,
-                label,
-            ));
+            let mut session = Box::new(
+                StrokeSession::begin(
+                    &open.doc.layers[idx],
+                    self.brush,
+                    self.fg,
+                    mode,
+                    pencil,
+                    label,
+                )
+                .with_alpha_lock(open.doc.layers[idx].lock_alpha),
+            );
+
             let layer = &mut open.doc.layers[idx];
             let layer_id = layer.id;
             let r = session.add_point(layer, p[0], p[1], pressure);
@@ -327,10 +437,11 @@ impl ToolState {
     fn handle_bucket(&mut self, open: &mut OpenDoc, out: &CanvasOut) {
         let Some(p) = out.pressed else { return };
         let Some(idx) = open.active_idx() else { return };
-        if !open.doc.layers[idx].visible {
-            self.notice = Some("A camada ativa está oculta.".into());
+        if let Some(msg) = paint_blocked(&open.doc.layers[idx]) {
+            self.notice = Some(msg);
             return;
         }
+        let lock_alpha = open.doc.layers[idx].lock_alpha;
         let patch: Option<PixelPatch> = bucket_fill(
             &mut open.doc.layers[idx],
             p[0].floor() as i64,
@@ -339,6 +450,7 @@ impl ToolState {
             self.contiguous,
             self.fg,
             self.fill_opacity,
+            lock_alpha,
         );
         match patch {
             Some(patch) => {
@@ -373,8 +485,8 @@ impl ToolState {
     fn handle_gradient(&mut self, open: &mut OpenDoc, out: &CanvasOut) {
         if let Some(p) = out.pressed {
             let Some(idx) = open.active_idx() else { return };
-            if !open.doc.layers[idx].visible {
-                self.notice = Some("A camada ativa está oculta.".into());
+            if let Some(msg) = paint_blocked(&open.doc.layers[idx]) {
+                self.notice = Some(msg);
                 return;
             }
             self.notice = None;
@@ -405,7 +517,7 @@ impl ToolState {
         ) = (preview, self.active.as_mut())
         {
             if let Some(l) = open.doc.layers.iter_mut().find(|l| l.id == *layer) {
-                if g.render(l, original) {
+                if g.render(l, original, l.lock_alpha) {
                     *drawn = true;
                     let r = Rect::full(l.width, l.height);
                     open.mark_dirty(r);
@@ -447,6 +559,9 @@ impl ToolState {
             ui.strong(self.tool.label());
             ui.separator();
             match self.tool {
+                Tool::Move => {
+                    ui.label("Arraste para mover a(s) camada(s) selecionada(s). Pixels que saem da imagem são descartados; bloqueio de posição impede o movimento.");
+                }
                 Tool::Brush | Tool::Pencil | Tool::Eraser => {
                     ui.label("Tamanho");
                     ui.add(egui::Slider::new(&mut self.brush.size, 1.0..=500.0).logarithmic(true).suffix(" px"));
@@ -807,5 +922,64 @@ mod tests {
         t.cancel(&mut o);
         assert_eq!(o.doc.layers[0].pixels, original);
         assert!(!t.is_busy());
+    }
+    #[test]
+    fn move_tool_shifts_selected_layer_as_one_undoable_action() {
+        let mut o = open_doc();
+        o.doc.layers[0].set_pixel(0, 0, [9, 9, 9, 255]);
+        let original = o.doc.layers.clone();
+        let mut t = ToolState::new(BrushParams::default(), [0; 4], [0; 4]);
+        t.tool = Tool::Move;
+        drag(&mut t, &mut o, &[[5.0, 5.0], [8.0, 7.0], [10.2, 8.1]]);
+        assert_eq!(o.history.labels(), vec!["Mover camada"]);
+        assert_eq!(o.doc.layers[0].pixel(5, 3).unwrap(), [9, 9, 9, 255]);
+        assert_eq!(o.doc.layers[0].pixel(0, 0).unwrap()[3], 0);
+        o.history.undo(&mut o.doc);
+        assert_eq!(o.doc.layers[0].pixels, original[0].pixels);
+    }
+
+    #[test]
+    fn position_lock_blocks_move_and_pixel_lock_blocks_paint() {
+        let mut o = open_doc();
+        o.doc.layers[0].lock_position = true;
+        let mut t = ToolState::new(BrushParams::default(), [1, 2, 3, 255], [0; 4]);
+        t.tool = Tool::Move;
+        drag(&mut t, &mut o, &[[5.0, 5.0], [9.0, 9.0]]);
+        assert!(o.history.labels().is_empty() && t.notice.is_some());
+        o.doc.layers[0].lock_position = false;
+        o.doc.layers[0].lock_pixels = true;
+        t.tool = Tool::Brush;
+        drag(&mut t, &mut o, &[[5.0, 5.0], [9.0, 9.0]]);
+        assert!(o.history.labels().is_empty());
+        t.tool = Tool::Bucket;
+        drag(&mut t, &mut o, &[[5.0, 5.0], [5.0, 5.0]]);
+        assert!(o.history.labels().is_empty());
+    }
+
+    #[test]
+    fn painting_on_a_group_is_refused() {
+        let mut o = open_doc();
+        let g = Layer::group("G");
+        let gid = g.id;
+        o.doc.layers.push(g);
+        o.active_layer = gid;
+        let mut t = ToolState::new(BrushParams::default(), [1, 2, 3, 255], [0; 4]);
+        drag(&mut t, &mut o, &[[5.0, 5.0], [9.0, 9.0]]);
+        assert!(t.notice.as_deref().is_some_and(|n| n.contains("grupo")));
+        assert!(o.history.labels().is_empty());
+    }
+
+    #[test]
+    fn alpha_lock_keeps_transparent_pixels_transparent_with_bucket() {
+        let mut o = OpenDoc::new(Document::new("t", 10, 10, None).unwrap());
+        o.doc.layers[0].set_pixel(2, 2, [0, 0, 0, 200]);
+        o.doc.layers[0].lock_alpha = true;
+        let mut t = ToolState::new(BrushParams::default(), [255, 0, 0, 255], [0; 4]);
+        t.tool = Tool::Bucket;
+        t.contiguous = false;
+        t.tolerance = 255;
+        drag(&mut t, &mut o, &[[2.0, 2.0], [2.0, 2.0]]);
+        assert_eq!(o.doc.layers[0].pixel(2, 2).unwrap(), [255, 0, 0, 200]);
+        assert_eq!(o.doc.layers[0].pixel(5, 5).unwrap()[3], 0);
     }
 }

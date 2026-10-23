@@ -71,15 +71,7 @@ pub fn import(bytes: &[u8], name: &str) -> Result<Imported, String> {
     }
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
-    let layer = Layer {
-        id: Layer::transparent("", 1, 1).id,
-        name: name.to_string(),
-        visible: true,
-        opacity: 1.0,
-        width: w,
-        height: h,
-        pixels: rgba.into_raw(),
-    };
+    let layer = Layer::from_pixels(name, w, h, rgba.into_raw());
     let document = Document::from_parts(name.to_string(), w, h, 72.0, vec![layer]);
     Ok(Imported { document, warnings })
 }
@@ -129,7 +121,7 @@ mod tests {
         let doc = pattern();
         let png = export_png(&doc).unwrap();
         let back = import(&png, "p").unwrap().document;
-        assert_eq!(back.layers[0].pixels, compose::flatten(&doc));
+        assert_eq!(*back.layers[0].pixels, compose::flatten(&doc));
         assert_eq!((back.width, back.height), (4, 2));
     }
 

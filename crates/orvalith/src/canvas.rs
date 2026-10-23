@@ -1,10 +1,13 @@
 //! Documento aberto e canvas: xadrez de transparência, zoom, pan, entrada de ferramentas.
 
 use eframe::egui::{self, Color32, CursorIcon, PointerButton, Rect, Sense, Stroke};
-use orvalith_core::edit::PixelPatch;
+use std::collections::HashMap;
+
+use orvalith_core::compose::RenderOpts;
+use orvalith_core::edit::{LayersEdit, PixelPatch};
 use orvalith_core::geom::Rect as PixRect;
 use orvalith_core::view::View;
-use orvalith_core::{compose, Document, History, LayerId};
+use orvalith_core::{compose, Document, History, Layer, LayerId};
 
 /// Maior lado suportado pela textura de visualização nesta fase (sem tiles ainda).
 const MAX_TEXTURE_SIDE: u32 = 8192;
@@ -25,8 +28,16 @@ pub struct OpenDoc {
     pub history: History,
     /// Caminho do projeto `.orva` salvo (None = nunca salvo).
     pub path: Option<std::path::PathBuf>,
-    /// Arrasto de opacidade em andamento: (camada, valor original).
-    pub opacity_drag: Option<(LayerId, f32)>,
+    /// Arrasto de opacidade/preenchimento em andamento: (rótulo, camadas antes).
+    pub prop_drag: Option<(String, Vec<Layer>)>,
+    /// Camadas selecionadas no painel (múltipla seleção).
+    pub selected: Vec<LayerId>,
+    /// Isolamento temporário de visibilidade (não entra no histórico nem no arquivo).
+    pub isolated: Option<LayerId>,
+    pub thumbs: HashMap<LayerId, egui::TextureHandle>,
+    pub thumbs_rev: u64,
+    /// Renomeação em andamento no painel.
+    pub renaming: Option<(LayerId, String)>,
     /// Última revisão gravada na cópia de recuperação.
     pub autosaved_rev: Option<u64>,
     /// Camada que recebe pintura.
@@ -50,7 +61,12 @@ impl OpenDoc {
             doc,
             history: History::new(),
             path: None,
-            opacity_drag: None,
+            prop_drag: None,
+            selected: vec![active_layer],
+            isolated: None,
+            thumbs: HashMap::new(),
+            thumbs_rev: 0,
+            renaming: None,
             autosaved_rev: None,
             active_layer,
             texture: None,
@@ -77,6 +93,21 @@ impl OpenDoc {
         self.doc.touch();
         self.dirty = Some(self.dirty.map_or(rect, |d| d.union(rect)));
         self.tracked_rev = self.doc.revision;
+    }
+
+    /// Registra uma troca de camadas já aplicada ao documento (ex.: mover), exibida com
+    /// atualização parcial da textura em `rect`.
+    pub fn record_layers(&mut self, label: &str, before: Vec<Layer>, rect: PixRect) {
+        let partial_ok = self.tracked_rev == self.doc.revision;
+        let after = self.doc.layers.clone();
+        self.history.record(
+            &mut self.doc,
+            Box::new(LayersEdit::new(label, before, after)),
+        );
+        if partial_ok {
+            self.dirty = Some(self.dirty.map_or(rect, |d| d.union(rect)));
+            self.tracked_rev = self.doc.revision;
+        }
     }
 
     /// Registra no histórico uma alteração de pixels já exibida (sem reenviar a textura toda).
@@ -293,7 +324,10 @@ fn sync_texture(ctx: &egui::Context, open: &mut OpenDoc) {
             .unwrap_or(PixRect::full(w, h))
             .clamp_to(w, h);
         if !r.is_empty() {
-            let rgba = compose::flatten_region(&open.doc, r);
+            let opts = RenderOpts {
+                isolate: open.isolated,
+            };
+            let rgba = compose::flatten_region_with(&open.doc, r, opts);
             let image =
                 egui::ColorImage::from_rgba_unmultiplied([r.w as usize, r.h as usize], &rgba);
             if let Some((trev, tex)) = open.texture.as_mut() {
@@ -304,7 +338,10 @@ fn sync_texture(ctx: &egui::Context, open: &mut OpenDoc) {
             *trev = rev;
         }
     } else {
-        let rgba = compose::flatten(&open.doc);
+        let opts = RenderOpts {
+            isolate: open.isolated,
+        };
+        let rgba = compose::flatten_region_with(&open.doc, PixRect::full(w, h), opts);
         let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
         let tex = ctx.load_texture("doc", image, texture_options());
         open.texture = Some((rev, tex));

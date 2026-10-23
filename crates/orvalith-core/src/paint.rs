@@ -7,6 +7,8 @@
 //! sobrepor carimbos no mesmo traço nunca excede a opacidade configurada.
 //! Ao terminar, o traço vira um único `PixelPatch` (uma ação de histórico).
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 use crate::compose::over;
@@ -108,10 +110,11 @@ pub struct StrokeSession {
     color: [u8; 4],
     mode: StrokeMode,
     pencil: bool,
+    lock_alpha: bool,
     label: &'static str,
     w: u32,
     h: u32,
-    snapshot: Vec<u8>,
+    snapshot: Arc<Vec<u8>>,
     coverage: Vec<f32>,
     dirty: Option<Rect>,
     /// Último ponto (suavizado) já percorrido pelo caminho.
@@ -136,6 +139,7 @@ impl StrokeSession {
             color,
             mode,
             pencil,
+            lock_alpha: false,
             label,
             w: layer.width,
             h: layer.height,
@@ -147,6 +151,12 @@ impl StrokeSession {
             target: (0.0, 0.0),
             pressure: 1.0,
         }
+    }
+
+    /// Bloqueio de transparência: pinta só onde já há pixels, sem mudar o alfa; borracha não age.
+    pub fn with_alpha_lock(mut self, lock: bool) -> Self {
+        self.lock_alpha = lock;
+        self
     }
 
     /// Adiciona uma amostra (coordenadas do documento; `pressure` em 0..=1) e pinta na
@@ -223,6 +233,7 @@ impl StrokeSession {
         if x0 >= x1 || y0 >= y1 {
             return None;
         }
+        let pixels = layer.pixels_mut();
         let flow = if self.pencil { 1.0 } else { self.params.flow };
         let opacity = self.params.opacity;
         for py in y0..y1 {
@@ -244,6 +255,25 @@ impl StrokeSession {
                     self.snapshot[p + 3],
                 ];
                 let out = match self.mode {
+                    StrokeMode::Paint if self.lock_alpha => {
+                        let t = c * f32::from(self.color[3]) / 255.0;
+                        let mix = |d: u8, s: u8| {
+                            (f32::from(d) + (f32::from(s) - f32::from(d)) * t)
+                                .round()
+                                .clamp(0.0, 255.0) as u8
+                        };
+                        if dst[3] == 0 {
+                            dst
+                        } else {
+                            [
+                                mix(dst[0], self.color[0]),
+                                mix(dst[1], self.color[1]),
+                                mix(dst[2], self.color[2]),
+                                dst[3],
+                            ]
+                        }
+                    }
+                    StrokeMode::Erase if self.lock_alpha => dst,
                     StrokeMode::Paint => {
                         let alpha = (c * f32::from(self.color[3])).round().clamp(0.0, 255.0) as u8;
                         over(
@@ -259,7 +289,7 @@ impl StrokeSession {
                         (f32::from(dst[3]) * (1.0 - c)).round().clamp(0.0, 255.0) as u8,
                     ],
                 };
-                layer.pixels[p..p + 4].copy_from_slice(&out);
+                pixels[p..p + 4].copy_from_slice(&out);
             }
         }
         let rect = Rect::new(x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32);
@@ -417,6 +447,27 @@ mod tests {
         let a = layer.pixel(10, 10).unwrap()[3];
         assert!((127..=129).contains(&a), "alfa {a}");
         assert_eq!(layer.pixel(0, 0).unwrap()[3], 0);
+    }
+
+    #[test]
+    fn alpha_lock_paints_only_existing_pixels_and_keeps_alpha() {
+        let mut layer = Layer::transparent("l", 20, 10);
+        for x in 0..10 {
+            layer.set_pixel(x, 5, [0, 0, 255, 128]);
+        }
+        let mut s = StrokeSession::begin(&layer, hard(30.0), red(), StrokeMode::Paint, false, "x")
+            .with_alpha_lock(true);
+        s.add_point(&mut layer, 10.0, 5.0, 1.0);
+        s.finish(&mut layer);
+        assert_eq!(layer.pixel(3, 5).unwrap(), [255, 0, 0, 128]);
+        assert_eq!(layer.pixel(15, 5).unwrap()[3], 0);
+        assert_eq!(layer.pixel(3, 4).unwrap()[3], 0);
+        let mut e = StrokeSession::begin(&layer, hard(30.0), red(), StrokeMode::Erase, false, "x")
+            .with_alpha_lock(true);
+        let before = layer.pixels.clone();
+        e.add_point(&mut layer, 10.0, 5.0, 1.0);
+        e.finish(&mut layer);
+        assert_eq!(layer.pixels, before);
     }
 
     #[test]

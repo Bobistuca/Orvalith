@@ -2,6 +2,7 @@
 
 mod app;
 mod canvas;
+mod layers_ui;
 mod prefs;
 mod theme;
 mod tools;
