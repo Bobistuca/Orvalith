@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Estágio 9: 16 ajustes de cor (destrutivos com prévia e como camadas de ajuste editáveis), histogramas, perfis ICC (preservar, atribuir, converter, prévia sRGB, embutir/converter na exportação) com `moxcms`; `.orva` v7. Sem 16 bits/Lab/CMYK/prova de cores.
 - Estágio 8: texto de ponto/parágrafo editável (fontes do sistema, Unicode, fallback, fonte ausente), formas com preenchimento/gradiente/traço, caneta Bézier e seleção de nós, booleanas, caminho → seleção, máscara vetorial e rasterização explícita; `.orva` v6 (`source`, máscara vetorial). Texto em caminho e vertical ficam planejados.
 - Estágio 7: máscaras de camada (criar, pintar, inverter, ativar, aplicar, excluir, vincular, densidade, pena, visão isolada), máscaras de recorte em cadeia, painel de canais (R/G/B e canais alfa salvos, editar pela máscara rápida), refinar borda; `.orva` v5.
 - Estágio 6: transformação livre/inclinar/distorcer/perspectiva/malha com prévia e cancelamento, espelhar/girar camadas, alinhar/distribuir, recorte, endireitar, tamanho da imagem e da tela, girar/espelhar tela, interpolação (vizinho/bilinear/bicúbica), réguas, guias, grade, encaixe e rotação da visão; `.orva` v4 (guias).

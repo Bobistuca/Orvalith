@@ -8,6 +8,7 @@ use image::{
     ColorType, DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageReader, Limits,
 };
 
+use crate::color::{self, IccProfile, ProfileKind};
 use crate::compose;
 use crate::document::{Document, Layer};
 
@@ -52,6 +53,7 @@ pub fn import(bytes: &[u8], name: &str) -> Result<Imported, String> {
         return Err(format!("Imagem grande demais ({w}×{h})."));
     }
     let color = decoder.color_type();
+    let icc_bytes = decoder.icc_profile().ok().flatten();
     let orientation = decoder
         .orientation()
         .unwrap_or(image::metadata::Orientation::NoTransforms);
@@ -72,23 +74,102 @@ pub fn import(bytes: &[u8], name: &str) -> Result<Imported, String> {
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
     let layer = Layer::from_pixels(name, w, h, rgba.into_raw());
-    let document = Document::from_parts(name.to_string(), w, h, 72.0, vec![layer]);
+    let mut document = Document::from_parts(name.to_string(), w, h, 72.0, vec![layer]);
+    if let Some(bytes) = icc_bytes {
+        match color::inspect(&bytes) {
+            Ok(info) if info.kind == ProfileKind::Rgb => {
+                let p = IccProfile {
+                    name: if info.description.is_empty() {
+                        "Perfil sem nome".into()
+                    } else {
+                        info.description
+                    },
+                    data: std::sync::Arc::new(bytes),
+                };
+                if !info.is_srgb {
+                    warnings.push(format!(
+                        "A imagem tem o perfil de cor \"{}\": foi preservado (pixels intactos) e a tela mostra uma prévia convertida para sRGB. Use Imagem → Perfil de cor para atribuir ou converter.",
+                        p.name
+                    ));
+                }
+                document.icc = Some(p);
+            }
+            Ok(info) => warnings.push(format!(
+                "O perfil de cor \"{}\" não é RGB e não é suportado: foi descartado e a imagem é tratada como sRGB.",
+                info.description
+            )),
+            Err(e) => warnings.push(format!(
+                "O perfil de cor embutido não pôde ser lido ({e}) e foi descartado; a imagem é tratada como sRGB."
+            )),
+        }
+    }
     Ok(Imported { document, warnings })
 }
 
-/// Exporta o documento composto como PNG com alfa.
+/// O que fazer com o perfil de cor na exportação.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorOut {
+    /// Grava os pixels como estão e embute o perfil do documento (se houver).
+    #[default]
+    Embed,
+    /// Converte para sRGB e embute o sRGB.
+    ToSrgb,
+    /// Grava sem perfil (o leitor presumirá sRGB); os pixels não são convertidos.
+    Strip,
+}
+
+/// Compõe e prepara o perfil a embutir conforme `mode`.
+fn flatten_for_export(
+    doc: &Document,
+    mode: ColorOut,
+) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
+    let mut rgba = compose::flatten(doc);
+    match mode {
+        ColorOut::Embed => Ok((rgba, doc.icc.as_ref().map(|p| p.data.as_ref().clone()))),
+        ColorOut::Strip => Ok((rgba, None)),
+        ColorOut::ToSrgb => {
+            if color::is_srgb(doc.icc.as_ref()) {
+                return Ok((rgba, doc.icc.as_ref().map(|p| p.data.as_ref().clone())));
+            }
+            color::convert_rgba(&mut rgba, doc.icc.as_ref(), None)?;
+            let srgb = color::builtin_profiles()
+                .into_iter()
+                .next()
+                .map(|p| p.data.as_ref().clone());
+            Ok((rgba, srgb))
+        }
+    }
+}
+
+/// Exporta o documento composto como PNG com alfa, embutindo o perfil do documento.
 pub fn export_png(doc: &Document) -> Result<Vec<u8>, String> {
-    let rgba = compose::flatten(doc);
+    export_png_with(doc, ColorOut::Embed)
+}
+
+pub fn export_png_with(doc: &Document, mode: ColorOut) -> Result<Vec<u8>, String> {
+    let (rgba, icc) = flatten_for_export(doc, mode)?;
     let mut out = Vec::new();
-    PngEncoder::new(&mut out)
-        .write_image(&rgba, doc.width, doc.height, ExtendedColorType::Rgba8)
+    let mut enc = PngEncoder::new(&mut out);
+    if let Some(p) = icc {
+        enc.set_icc_profile(p).map_err(|e| e.to_string())?;
+    }
+    enc.write_image(&rgba, doc.width, doc.height, ExtendedColorType::Rgba8)
         .map_err(|e| e.to_string())?;
     Ok(out)
 }
 
 /// Exporta como JPEG (qualidade 1–100), compondo sobre `background` (RGB).
 pub fn export_jpeg(doc: &Document, quality: u8, background: [u8; 3]) -> Result<Vec<u8>, String> {
-    let rgba = compose::flatten(doc);
+    export_jpeg_with(doc, quality, background, ColorOut::Embed)
+}
+
+pub fn export_jpeg_with(
+    doc: &Document,
+    quality: u8,
+    background: [u8; 3],
+    mode: ColorOut,
+) -> Result<Vec<u8>, String> {
+    let (rgba, icc) = flatten_for_export(doc, mode)?;
     let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
     for px in rgba.as_chunks::<4>().0 {
         let a = u32::from(px[3]);
@@ -98,8 +179,11 @@ pub fn export_jpeg(doc: &Document, quality: u8, background: [u8; 3]) -> Result<V
         }
     }
     let mut out = Vec::new();
-    JpegEncoder::new_with_quality(&mut out, quality.clamp(1, 100))
-        .write_image(&rgb, doc.width, doc.height, ExtendedColorType::Rgb8)
+    let mut enc = JpegEncoder::new_with_quality(&mut out, quality.clamp(1, 100));
+    if let Some(p) = icc {
+        enc.set_icc_profile(p).map_err(|e| e.to_string())?;
+    }
+    enc.write_image(&rgb, doc.width, doc.height, ExtendedColorType::Rgb8)
         .map_err(|e| e.to_string())?;
     Ok(out)
 }
@@ -177,5 +261,44 @@ mod tests {
     fn rejects_garbage_and_unsupported() {
         assert!(import(b"isto nao e imagem", "x").is_err());
         assert!(import(&[], "x").is_err());
+    }
+    #[test]
+    fn profile_is_embedded_read_back_and_converted_on_request() {
+        let mut doc = Document::new("p", 4, 4, Some([255, 0, 0, 255])).unwrap();
+        doc.icc = crate::color::builtin_profiles()
+            .into_iter()
+            .find(|p| p.name == "Display P3");
+        // Embutir: pixels intactos, perfil volta ao importar, com aviso.
+        let png = export_png_with(&doc, ColorOut::Embed).unwrap();
+        let back = import(&png, "p").unwrap();
+        assert_eq!(
+            back.document.icc.as_ref().map(|p| p.name.as_str()),
+            Some("Display P3")
+        );
+        assert_eq!(back.document.layers[0].pixel(0, 0), Some([255, 0, 0, 255]));
+        assert!(back.warnings.iter().any(|w| w.contains("Display P3")));
+        // Converter para sRGB: o vermelho P3 satura em sRGB e o perfil gravado é sRGB.
+        let conv = export_png_with(&doc, ColorOut::ToSrgb).unwrap();
+        let c = import(&conv, "c").unwrap();
+        assert!(c
+            .document
+            .icc
+            .as_ref()
+            .is_some_and(|p| p.name.to_lowercase().contains("srgb")));
+        let px = c.document.layers[0].pixel(0, 0).unwrap();
+        assert!(px[0] >= 250 && px[1] <= 3 && px[2] <= 3, "{px:?}");
+        // Sem perfil.
+        let stripped = import(&export_png_with(&doc, ColorOut::Strip).unwrap(), "s").unwrap();
+        assert!(stripped.document.icc.is_none());
+        // JPEG também carrega o perfil.
+        let jpg = export_jpeg_with(&doc, 90, [0; 3], ColorOut::Embed).unwrap();
+        assert!(import(&jpg, "j").unwrap().document.icc.is_some());
+        // Documento sem perfil exporta sem perfil.
+        let plain = Document::new("n", 2, 2, None).unwrap();
+        assert!(import(&export_png(&plain).unwrap(), "n")
+            .unwrap()
+            .document
+            .icc
+            .is_none());
     }
 }

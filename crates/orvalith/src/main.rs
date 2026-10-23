@@ -1,5 +1,6 @@
 //! Orvalith: editor de imagens desktop, offline e sem login.
 
+mod adjustui;
 mod app;
 mod canvas;
 mod geometry;

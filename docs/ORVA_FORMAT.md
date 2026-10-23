@@ -34,6 +34,9 @@ Cada camada ganha `clipped` (recortada na camada abaixo) e `mask` opcional: `off
 ## Versão 6 (Estágio 8)
 Cada camada ganha `source` opcional (`{"Text": …}` ou `{"Shape": …}`: especificação editável de texto ou forma/caminho) e cada máscara ganha `vector` opcional (forma que a gerou). Os pixels continuam gravados, então a aparência independe de fontes instaladas. Leitura leniente: `source`/`vector` desconhecidos, inválidos ou fora dos limites (`source.rs`) são ignorados e a camada vira raster, sem erro. Fontes ausentes geram aviso ao abrir.
 
+## Versão 7 (Estágio 9)
+Cada camada ganha `adjustment` opcional (JSON do ajuste: tipo e parâmetros; camada transparente do tamanho do documento). O manifesto ganha `icc` opcional (`name`, `offset`, `stored_len`, `raw_len`, `crc32` de um recurso zlib com os bytes do perfil, ≤ 16 MiB). Leitura leniente: ajuste desconhecido ou com parâmetros fora dos limites é ignorado (camada transparente comum); os bytes do perfil são preservados mesmo que este leitor não os entenda, e o CRC é validado.
+
 ## Evolução
 Campos desconhecidos no manifesto são ignorados; mudanças incompatíveis incrementam a versão. Um leitor recusa versões maiores que a sua com mensagem clara. Camadas futuras (grupos, máscaras, texto…) entrarão como novos campos/recursos no manifesto.
 

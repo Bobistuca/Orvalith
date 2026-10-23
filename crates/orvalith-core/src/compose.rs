@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::adjust::Prepared;
 use crate::blend::{blend_rgb, dissolve_noise, BlendMode};
 use crate::document::{Document, Layer, LayerId, LayerKind};
 use crate::geom::Rect;
@@ -97,7 +98,15 @@ fn render_level(
         if !base.visible || show.is_some_and(|s| !s.contains(&base.id)) {
             continue;
         }
-        if chain.is_empty() {
+        if base.adjustment.is_some() {
+            // Uma camada de ajuste não tem conteúdo próprio: nada a recortar nela.
+            render_single(doc, base, r, buf, show);
+            for c in chain {
+                if c.visible && show.is_none_or(|s| s.contains(&c.id)) {
+                    render_single(doc, c, r, buf, show);
+                }
+            }
+        } else if chain.is_empty() {
             render_single(doc, base, r, buf, show);
         } else {
             render_clipped(doc, base, &chain, r, buf, show);
@@ -113,6 +122,10 @@ fn render_single(
     show: Option<&HashSet<LayerId>>,
 ) {
     let mask = effective_mask(doc, layer);
+    if let Some(adj) = &layer.adjustment {
+        apply_adjustment_layer(&adj.prepare(), layer, buf, r, mask.as_deref(), doc.width);
+        return;
+    }
     match layer.kind {
         LayerKind::Raster => {
             blend_raster(layer, r, buf, mask.as_deref().map(Vec::as_slice), doc.width)
@@ -209,6 +222,11 @@ fn render_clipped(
             continue;
         }
         let cmask = effective_mask(doc, c);
+        if let Some(adj) = &c.adjustment {
+            // Ajuste recortado: age só sobre a base (o alfa da base não muda).
+            apply_adjustment_layer(&adj.prepare(), c, &mut b, r, cmask.as_deref(), doc.width);
+            continue;
+        }
         // Conteúdo da camada recortada (raster ou grupo isolado) com a sua máscara.
         let src_buf = match c.kind {
             LayerKind::Raster => {
@@ -257,6 +275,44 @@ fn render_clipped(
         base.blend
     };
     blend_buffer(&b, buf, r, mode, base.opacity * base.fill);
+}
+
+/// Aplica uma camada de ajuste ao que já está em `buf` (região `r`): o resultado do ajuste é
+/// mesclado com o modo, a opacidade e a máscara da camada; o alfa de `buf` nunca muda.
+fn apply_adjustment_layer(
+    prep: &Prepared,
+    layer: &Layer,
+    buf: &mut [u8],
+    r: Rect,
+    mask: Option<&Vec<u8>>,
+    doc_w: u32,
+) {
+    let scale = layer.opacity * layer.fill;
+    if scale <= 0.0 {
+        return;
+    }
+    let mode = if layer.blend == BlendMode::PassThrough {
+        BlendMode::Normal
+    } else {
+        layer.blend
+    };
+    let rw = r.w as usize;
+    for (i, dst) in buf.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        if dst[3] == 0 {
+            continue;
+        }
+        let (x, y) = (r.x + (i % rw) as u32, r.y + (i / rw) as u32);
+        let m = mask.map_or(1.0, |m| {
+            f32::from(m[y as usize * doc_w as usize + x as usize]) / 255.0
+        });
+        if m <= 0.0 {
+            continue;
+        }
+        let adjusted = prep.apply([dst[0], dst[1], dst[2]]);
+        let src = [adjusted[0], adjusted[1], adjusted[2], 255];
+        let out = composite(*dst, src, mode, scale * m, x, y);
+        dst[..3].copy_from_slice(&out[..3]);
+    }
 }
 
 /// Mescla uma camada raster no buffer da região (`mask`: máscara efetiva do tamanho do documento).

@@ -15,6 +15,7 @@ use crate::canvas::OpenDoc;
 use geocmds::GeoCmd;
 use selops::SelCmd;
 
+use crate::adjustui::{self, AdjSession, ColorAction, ColorDialog, HistState};
 use crate::canvas::{self, RulerUnit, ViewCmd, ViewOpts};
 use crate::geometry::TMode;
 use crate::layers_ui::{self, LayerCmd};
@@ -35,6 +36,7 @@ struct NewDocForm {
 }
 
 struct ExportForm {
+    color: orvalith_core::imageio::ColorOut,
     jpeg: bool,
     quality: u8,
     background: [u8; 3],
@@ -68,6 +70,10 @@ enum Action {
     Fill(bool),
     Confirm,
     Geo(GeoCmd),
+    AdjStart(usize),
+    AdjLayer(usize),
+    ToggleHist,
+    ColorDlg,
 }
 
 pub struct OrvalithApp {
@@ -97,6 +103,10 @@ pub struct OrvalithApp {
     autosave_rx: mpsc::Receiver<String>,
     /// Cópias de recuperação de sessões anteriores aguardando decisão.
     recovery_found: Vec<PathBuf>,
+    /// Ajuste destrutivo em andamento: (id do documento, sessão).
+    adj_session: Option<(u64, AdjSession)>,
+    hist: HistState,
+    color_dlg: ColorDialog,
 }
 
 impl OrvalithApp {
@@ -127,6 +137,9 @@ impl OrvalithApp {
             autosave_tx,
             autosave_rx,
             recovery_found,
+            adj_session: None,
+            hist: HistState::default(),
+            color_dlg: ColorDialog::default(),
         }
     }
 
@@ -216,6 +229,7 @@ impl OrvalithApp {
             Action::Export => {
                 if !self.docs.is_empty() && self.export.is_none() {
                     self.export = Some(ExportForm {
+                        color: orvalith_core::imageio::ColorOut::Embed,
                         jpeg: false,
                         quality: 90,
                         background: [255, 255, 255],
@@ -250,6 +264,32 @@ impl OrvalithApp {
                         layers_ui::run(open, cmd, &mut self.layer_clip, &mut self.layer_counter);
                 }
             }
+            Action::AdjStart(kind) => {
+                if self.tools.is_busy() {
+                    return;
+                }
+                if let Some(o) = self.docs.get_mut(self.active) {
+                    if let Some((did, mut s)) = self.adj_session.take() {
+                        if did == o.doc.id.0 {
+                            adjustui::cancel_session(&mut s, o);
+                        }
+                    }
+                    match AdjSession::begin(o, kind) {
+                        Ok(s) => self.adj_session = Some((o.doc.id.0, s)),
+                        Err(e) => self.tools.notice = Some(e),
+                    }
+                }
+            }
+            Action::AdjLayer(kind) => {
+                if self.tools.is_busy() {
+                    return;
+                }
+                if let Some(o) = self.docs.get_mut(self.active) {
+                    adjustui::new_adjustment_layer(o, kind);
+                }
+            }
+            Action::ToggleHist => self.hist.open = !self.hist.open,
+            Action::ColorDlg => self.color_dlg.open = !self.color_dlg.open,
             Action::Select(c) => self.run_select(c),
             Action::CopySel(cut) => self.copy_cut(cut),
             Action::DeleteKey => self.delete_key(),
@@ -643,6 +683,41 @@ impl eframe::App for OrvalithApp {
                     ui.small("Combinar usa as formas selecionadas (Ctrl+clique):");
                     ui.small("a mais baixa é a base; a mais alta é o operando.");
                 });
+                ui.menu_button("Ajustes", |ui| {
+                    for (i, name) in orvalith_core::adjust::KINDS.iter().enumerate() {
+                        if ui
+                            .add_enabled(has_doc, egui::Button::new(format!("{name}…")))
+                            .clicked()
+                        {
+                            actions.push(Action::AdjStart(i));
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    ui.menu_button("Nova camada de ajuste", |ui| {
+                        for (i, name) in orvalith_core::adjust::KINDS.iter().enumerate() {
+                            if ui.add_enabled(has_doc, egui::Button::new(*name)).clicked() {
+                                actions.push(Action::AdjLayer(i));
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.separator();
+                    if ui
+                        .add_enabled(has_doc, egui::Button::new("Histograma"))
+                        .clicked()
+                    {
+                        actions.push(Action::ToggleHist);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_doc, egui::Button::new("Perfil de cor…"))
+                        .clicked()
+                    {
+                        actions.push(Action::ColorDlg);
+                        ui.close();
+                    }
+                });
                 ui.menu_button("Imagem", |ui| {
                     let items: [(&str, &str, GeoCmd); 11] = [
                         ("Tamanho da imagem…", "Ctrl+Alt+I", GeoCmd::ImageSize),
@@ -844,6 +919,10 @@ impl eframe::App for OrvalithApp {
                         if let Some(p) = self.cursor_doc {
                             ui.separator();
                             ui.label(format!("x: {}  y: {}", p[0].floor(), p[1].floor()));
+                        }
+                        if let Some(p) = &d.doc.icc {
+                            ui.separator();
+                            ui.label(format!("Perfil: {}", p.name));
                         }
                         if let Some(r) = d.sel_info {
                             ui.separator();
@@ -1088,6 +1167,15 @@ impl OrvalithApp {
                     } else {
                         ui.small("PNG preserva a transparência (8 bits por canal).");
                     }
+                    if let Some(p) = self.docs.get(self.active).and_then(|d| d.doc.icc.as_ref()) {
+                        use orvalith_core::imageio::ColorOut;
+                        ui.separator();
+                        ui.label(format!("Perfil do documento: {}", p.name));
+                        ui.radio_value(&mut form.color, ColorOut::Embed, "Embutir o perfil (pixels intactos)");
+                        ui.radio_value(&mut form.color, ColorOut::ToSrgb, "Converter para sRGB");
+                        ui.radio_value(&mut form.color, ColorOut::Strip, "Gravar sem perfil (sem converter)");
+                        ui.separator();
+                    }
                     ui.small("Exportar não altera o projeto nem o estado de alterações não salvas.");
                     ui.horizontal(|ui| {
                         go = ui.button("Escolher destino…").clicked();
@@ -1100,6 +1188,8 @@ impl OrvalithApp {
                 self.export = Some(form);
             }
         }
+
+        self.adjust_windows(ctx);
 
         if let Some(i) = self.pending_close {
             let name = self
@@ -1359,5 +1449,63 @@ fn text_editor_ui(
         vec.cancel_text(open);
     } else if ok {
         vec.commit_text(open);
+    }
+}
+
+impl OrvalithApp {
+    /// Janelas de ajuste destrutivo, histograma e perfil de cor.
+    fn adjust_windows(&mut self, ctx: &egui::Context) {
+        let active_id = self.docs.get(self.active).map(|d| d.doc.id.0);
+        // Uma sessão destrutiva pertence a um documento: trocar de aba a cancela.
+        if let Some((did, _)) = &self.adj_session {
+            if Some(*did) != active_id {
+                if let Some((did, mut s)) = self.adj_session.take() {
+                    if let Some(o) = self.docs.iter_mut().find(|d| d.doc.id.0 == did) {
+                        adjustui::cancel_session(&mut s, o);
+                    }
+                }
+            }
+        }
+        if let (Some((_, s)), Some(open)) =
+            (self.adj_session.as_mut(), self.docs.get_mut(self.active))
+        {
+            if adjustui::session_window(ctx, s, open) {
+                self.adj_session = None;
+            }
+        }
+        if let Some(open) = self.docs.get(self.active) {
+            adjustui::histogram_window(ctx, &mut self.hist, open);
+        }
+        let mut msg = None;
+        if let Some(open) = self.docs.get(self.active) {
+            if let Some(action) = adjustui::color_window(ctx, &mut self.color_dlg, open) {
+                match action {
+                    ColorAction::OpenFile => {
+                        let picked = rfd::FileDialog::new()
+                            .add_filter("Perfil ICC", &["icc", "icm"])
+                            .pick_file();
+                        if let Some(path) = picked {
+                            match std::fs::read(&path)
+                                .map_err(|e| e.to_string())
+                                .and_then(|b| orvalith_core::color::profile_from_bytes(&b))
+                            {
+                                Ok(p) => self.color_dlg.add_profile(p),
+                                Err(e) => msg = Some(e),
+                            }
+                        }
+                    }
+                    other => {
+                        if let Some(o) = self.docs.get_mut(self.active) {
+                            if let Some(m) = adjustui::run_color_action(o, other) {
+                                msg = Some(m);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(m) = msg {
+            self.show_message("Perfil de cor", m);
+        }
     }
 }

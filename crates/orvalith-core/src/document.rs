@@ -7,7 +7,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use crate::adjust::Adjustment;
 use crate::blend::BlendMode;
+use crate::color::IccProfile;
 use crate::source::LayerSource;
 use crate::vector::ShapeSpec;
 
@@ -181,6 +183,8 @@ pub struct Layer {
     pub clipped: bool,
     /// Origem editável (texto ou forma). `None` = camada raster comum.
     pub source: Option<LayerSource>,
+    /// Camada de ajuste não destrutivo: age sobre o que está abaixo (os pixels ficam transparentes).
+    pub adjustment: Option<Adjustment>,
     pub width: u32,
     pub height: u32,
     pub pixels: Arc<Vec<u8>>,
@@ -221,6 +225,7 @@ impl Layer {
             mask: None,
             clipped: false,
             source: None,
+            adjustment: None,
             width,
             height,
             pixels: Arc::new(pixels),
@@ -330,6 +335,8 @@ pub struct Document {
     pub channels: Vec<Channel>,
     /// Guias de régua (salvas no projeto).
     pub guides: Vec<Guide>,
+    /// Perfil ICC atribuído aos pixels (`None` = sRGB presumido).
+    pub icc: Option<IccProfile>,
     /// Há alterações não salvas.
     pub modified: bool,
     /// Incrementa a cada edição; descarta resultados assíncronos obsoletos.
@@ -367,6 +374,7 @@ impl Document {
             selection: Selection::default(),
             channels: Vec::new(),
             guides: Vec::new(),
+            icc: None,
             modified: false,
             revision: 0,
         })
@@ -387,6 +395,7 @@ impl Document {
             selection: Selection::default(),
             channels: Vec::new(),
             guides: Vec::new(),
+            icc: None,
             modified: false,
             revision: 0,
         }

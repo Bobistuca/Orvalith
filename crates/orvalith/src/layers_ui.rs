@@ -380,6 +380,7 @@ fn end_prop_drag(open: &mut OpenDoc) {
                 || (a.fill - b.fill).abs() > 1e-6
                 || mask_changed
                 || a.source != b.source
+                || a.adjustment != b.adjustment
         });
         if changed {
             let after = open.doc.layers.clone();
@@ -504,6 +505,22 @@ fn props_ui(ui: &mut egui::Ui, open: &mut OpenDoc) -> Vec<LayerCmd> {
         {
             cmds.push(LayerCmd::Rasterize);
         }
+    }
+    // ---- Camada de ajuste (não destrutiva) ----
+    if let Some(adj) = open.doc.layers[idx].adjustment.clone() {
+        ui.separator();
+        ui.label(format!("Ajuste: {}", adj.name()));
+        let mut a = adj;
+        let mut st = std::mem::take(&mut open.adj_ui);
+        let changed = crate::adjustui::adjust_ui(ui, &mut a, &mut st);
+        open.adj_ui = st;
+        if changed {
+            begin_prop_drag(open, "Editar ajuste");
+            a.sanitize();
+            open.doc.layers[idx].adjustment = Some(a);
+            open.doc.touch();
+        }
+        ui.small("Age sobre as camadas abaixo; use opacidade, modo, máscara e recorte como em outras camadas.");
     }
     ui.separator();
     // ---- Máscara de camada ----
@@ -687,6 +704,7 @@ fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) -> Vec<LayerCmd> {
             let tag = match &l.source {
                 Some(orvalith_core::LayerSource::Text(_)) => "T ",
                 Some(orvalith_core::LayerSource::Shape(_)) => "F ",
+                None if l.adjustment.is_some() => "A ",
                 None => "",
             };
             let has_mask = l.mask.is_some();

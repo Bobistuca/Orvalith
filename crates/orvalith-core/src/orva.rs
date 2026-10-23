@@ -14,14 +14,16 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use serde::{Deserialize, Serialize};
 
+use crate::adjust::Adjustment;
 use crate::blend::BlendMode;
+use crate::color::{IccProfile, MAX_PROFILE_BYTES};
 use crate::document::{Channel, Document, Guide, Layer, LayerId, LayerKind, LayerMask};
 use crate::layerops::normalize;
 use crate::source::{shape_sane, LayerSource};
 use crate::vector::ShapeSpec;
 
 pub const MAGIC: &[u8; 8] = b"ORVALITH";
-pub const CURRENT_VERSION: u32 = 6;
+pub const CURRENT_VERSION: u32 = 7;
 const MAX_CHANNELS: usize = 256;
 const HEADER_LEN: usize = 20;
 const MAX_MANIFEST: usize = 64 * 1024 * 1024;
@@ -69,6 +71,19 @@ struct Manifest {
     /// Versão 4: guias de régua.
     #[serde(default)]
     guides: Vec<GuideEntry>,
+    /// Versão 7: perfil ICC atribuído ao documento.
+    #[serde(default)]
+    icc: Option<IccEntry>,
+}
+
+/// Perfil ICC (versão 7): recurso zlib com os bytes do perfil.
+#[derive(Serialize, Deserialize)]
+struct IccEntry {
+    name: String,
+    offset: u64,
+    stored_len: u64,
+    raw_len: u64,
+    crc32: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -128,6 +143,9 @@ struct LayerEntry {
     /// Versão 6: origem editável (texto/forma) como JSON; lida de forma tolerante.
     #[serde(default)]
     source: Option<serde_json::Value>,
+    /// Versão 7: ajuste não destrutivo (JSON lido de forma tolerante).
+    #[serde(default)]
+    adjustment: Option<serde_json::Value>,
 }
 
 /// Máscara de camada (versão 5): recurso zlib de 1 byte por pixel do documento.
@@ -211,6 +229,10 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
             clipped: l.clipped,
             mask: None,
             source: l.source.as_ref().and_then(|s| serde_json::to_value(s).ok()),
+            adjustment: l
+                .adjustment
+                .as_ref()
+                .and_then(|a| serde_json::to_value(a).ok()),
         });
         blob.extend_from_slice(&packed);
         if let Some(m) = &l.mask {
@@ -248,6 +270,19 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
         });
         blob.extend_from_slice(&packed);
     }
+    let icc_entry = match &doc.icc {
+        Some(p) => {
+            let (offset, stored_len, crc32) = pack(&p.data, &mut blob)?;
+            Some(IccEntry {
+                name: p.name.clone(),
+                offset,
+                stored_len,
+                raw_len: p.data.len() as u64,
+                crc32,
+            })
+        }
+        None => None,
+    };
     let manifest = Manifest {
         format: "orvalith-project".into(),
         app_version: env!("CARGO_PKG_VERSION").into(),
@@ -265,6 +300,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
                 pos: g.pos,
             })
             .collect(),
+        icc: icc_entry,
     };
     let json = serde_json::to_vec(&manifest).map_err(|e| OrvaError::Corrupt(e.to_string()))?;
     let mut out = Vec::with_capacity(HEADER_LEN + json.len() + blob.len());
@@ -478,6 +514,14 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
             .as_ref()
             .and_then(|v| serde_json::from_value::<LayerSource>(v.clone()).ok())
             .filter(LayerSource::is_sane);
+        layer.adjustment = e
+            .adjustment
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<Adjustment>(v.clone()).ok())
+            .filter(Adjustment::is_sane);
+        if layer.adjustment.is_some() {
+            layer.source = None;
+        }
         if let Some(me) = &e.mask {
             let packed = &blob[me.offset as usize..(me.offset + me.stored_len) as usize];
             let mut data = Vec::with_capacity(me.raw_len as usize);
@@ -508,6 +552,33 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
     }
     let layers = normalize(layers);
     let manifest_guides = manifest.guides;
+    let icc = match &manifest.icc {
+        Some(ie) => {
+            if ie.raw_len > MAX_PROFILE_BYTES as u64
+                || ie
+                    .offset
+                    .checked_add(ie.stored_len)
+                    .is_none_or(|end| end > blob.len() as u64)
+            {
+                return Err(OrvaError::Corrupt("perfil ICC".into()));
+            }
+            let packed = &blob[ie.offset as usize..(ie.offset + ie.stored_len) as usize];
+            let mut data = Vec::with_capacity(ie.raw_len as usize);
+            ZlibDecoder::new(packed)
+                .take(ie.raw_len + 1)
+                .read_to_end(&mut data)
+                .map_err(|err| OrvaError::Corrupt(format!("perfil ICC: {err}")))?;
+            if data.len() as u64 != ie.raw_len || crc32fast::hash(&data) != ie.crc32 {
+                return Err(OrvaError::Corrupt("perfil ICC".into()));
+            }
+            // Os bytes são preservados mesmo que este leitor não os entenda.
+            Some(IccProfile {
+                name: ie.name.chars().take(200).collect(),
+                data: std::sync::Arc::new(data),
+            })
+        }
+        None => None,
+    };
     let mut channels = Vec::with_capacity(manifest.channels.len());
     for c in &manifest.channels {
         let packed = &blob[c.offset as usize..(c.offset + c.stored_len) as usize];
@@ -533,6 +604,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         layers,
     );
     doc.channels = channels;
+    doc.icc = icc;
     doc.guides = manifest_guides
         .iter()
         .filter(|g| g.pos.is_finite())
@@ -824,5 +896,53 @@ mod tests {
         let loaded = read(&out).unwrap();
         assert!(loaded.layers[0].source.is_none());
         assert_eq!(loaded.layers[0].pixels, hostile.layers[0].pixels);
+    }
+    #[test]
+    fn adjustment_layers_and_icc_roundtrip_and_hostile_ones_are_dropped() {
+        use crate::adjust::{Adjustment, LevelsChan};
+        let mut doc = Document::new("a", 4, 4, Some([10, 20, 30, 255])).unwrap();
+        let mut adj = Adjustment::neutral(2);
+        if let Adjustment::Levels { master, .. } = &mut adj {
+            *master = LevelsChan {
+                in_black: 20.0,
+                gamma: 1.4,
+                ..LevelsChan::default()
+            };
+        }
+        let mut l = Layer::transparent("Níveis", 4, 4);
+        l.adjustment = Some(adj.clone());
+        doc.layers.push(l);
+        doc.icc = crate::color::builtin_profiles().into_iter().nth(2);
+        let bytes = write(&doc).unwrap();
+        let back = read(&bytes).unwrap();
+        assert_eq!(back.layers[1].adjustment, Some(adj));
+        assert_eq!(back.icc, doc.icc, "perfil preservado byte a byte");
+        // Parâmetros fora dos limites: a camada vira transparente comum, sem erro.
+        let man_len = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        let man = String::from_utf8(bytes[HEADER_LEN..HEADER_LEN + man_len].to_vec()).unwrap();
+        let bad = man.replacen("\"in_black\":20.0", "\"in_black\":9999.0", 1);
+        assert_ne!(bad, man);
+        let mut out = bytes[..12].to_vec();
+        out.extend_from_slice(&(bad.len() as u32).to_le_bytes());
+        out.extend_from_slice(&crc32fast::hash(bad.as_bytes()).to_le_bytes());
+        out.extend_from_slice(bad.as_bytes());
+        out.extend_from_slice(&bytes[HEADER_LEN + man_len..]);
+        let loaded = read(&out).unwrap();
+        assert!(loaded.layers[1].adjustment.is_none());
+        // Corrupção dos bytes do perfil é detectada.
+        let mut broken = bytes.clone();
+        let last = broken.len() - 1;
+        broken[last] ^= 0xFF;
+        assert!(read(&broken).is_err());
+    }
+
+    #[test]
+    fn version_6_files_load_without_adjustments_or_profile() {
+        let doc = Document::new("v", 3, 3, Some([1, 2, 3, 255])).unwrap();
+        let bytes = write(&doc).unwrap();
+        let mut old = bytes.clone();
+        old[8..12].copy_from_slice(&6u32.to_le_bytes());
+        let back = read(&old).unwrap();
+        assert!(back.icc.is_none() && back.layers[0].adjustment.is_none());
     }
 }

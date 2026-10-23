@@ -197,6 +197,8 @@ pub fn gray(c: [u8; 4]) -> [u8; 4] {
 pub(crate) fn paint_blocked(l: &Layer) -> Option<String> {
     if l.is_group() {
         Some("Selecione uma camada raster (não um grupo) para pintar.".into())
+    } else if l.adjustment.is_some() {
+        Some("Camada de ajuste: não recebe pintura (use a máscara dela).".into())
     } else if l.source.is_some() {
         Some("Camada de texto/forma: use Camada → Rasterizar antes de pintar.".into())
     } else if !l.visible {

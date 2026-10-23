@@ -234,9 +234,9 @@ impl OrvalithApp {
             with_extension(path, ext)
         };
         let result = if form.jpeg {
-            imageio::export_jpeg(&open.doc, form.quality, form.background)
+            imageio::export_jpeg_with(&open.doc, form.quality, form.background, form.color)
         } else {
-            imageio::export_png(&open.doc)
+            imageio::export_png_with(&open.doc, form.color)
         };
         match result.and_then(|b| fsio::atomic_write(&path, &b).map_err(|e| e.to_string())) {
             Ok(()) => self.show_message("Exportação concluída", path.display().to_string()),

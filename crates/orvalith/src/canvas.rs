@@ -3,6 +3,8 @@
 use eframe::egui::{self, Color32, CursorIcon, PointerButton, Rect, Sense, Stroke};
 use std::collections::HashMap;
 
+use crate::adjustui::AdjUiState;
+use orvalith_core::color::Preview;
 use orvalith_core::compose::RenderOpts;
 use orvalith_core::docops::{DocEdit, DocState};
 use orvalith_core::edit::{LayersEdit, PixelPatch};
@@ -55,6 +57,12 @@ pub struct OpenDoc {
     pub renaming_channel: Option<(u64, String)>,
     /// Filtro de busca da lista de fontes (painel da camada).
     pub font_filter: String,
+    /// Estado dos controles do editor de ajustes (painel da camada de ajuste).
+    pub adj_ui: AdjUiState,
+    /// Prévia na tela convertida do perfil do documento para sRGB.
+    pub proof: bool,
+    preview: Option<std::sync::Arc<Preview>>,
+    preview_key: (Option<usize>, bool),
     /// Máscara rápida: um documento cinza (255 = selecionado) editado com as ferramentas de pintura.
     pub qm: Option<Box<OpenDoc>>,
     sel_edges: Option<(usize, Vec<[f32; 4]>)>,
@@ -98,6 +106,10 @@ impl OpenDoc {
             mask_thumbs: HashMap::new(),
             renaming_channel: None,
             font_filter: String::new(),
+            adj_ui: AdjUiState::default(),
+            proof: true,
+            preview: None,
+            preview_key: (None, true),
             qm: None,
             sel_edges: None,
             guide_drag: None,
@@ -111,6 +123,31 @@ impl OpenDoc {
             fit_mode: true,
             zoom_percent: 100.0,
         }
+    }
+
+    /// Reconstrói a conversão de prévia quando o perfil (ou a opção) muda e refaz a textura.
+    pub fn ensure_preview(&mut self) {
+        let key = (
+            self.doc
+                .icc
+                .as_ref()
+                .map(|p| std::sync::Arc::as_ptr(&p.data) as usize),
+            self.proof,
+        );
+        if key == self.preview_key {
+            return;
+        }
+        self.preview_key = key;
+        self.preview = if self.proof {
+            Preview::new(self.doc.icc.as_ref())
+                .ok()
+                .flatten()
+                .map(std::sync::Arc::new)
+        } else {
+            None
+        };
+        self.texture = None;
+        self.dirty = None;
     }
 
     /// Índice da camada ativa (cai para a mais alta se o ID não existir mais).
@@ -394,6 +431,7 @@ pub fn show(
     space_down: bool,
     overlay: &Overlay,
 ) -> CanvasOut {
+    open.ensure_preview();
     let (full, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
     let rotated = open.view.is_some_and(|v| v.rotation_deg != 0.0);
     let ruler = if overlay.view.rulers && !rotated {
@@ -1031,6 +1069,9 @@ fn render_composite(o: &OpenDoc, r: PixRect) -> Vec<u8> {
         show_mask: o.mask_view,
     };
     let mut px = compose::flatten_region_with(&o.doc, r, opts);
+    if let Some(p) = &o.preview {
+        p.apply(&mut px);
+    }
     apply_channel_view(&mut px, o.view_channels);
     px
 }

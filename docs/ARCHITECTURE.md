@@ -39,5 +39,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Texto, formas e caminhos (Estágio 8)
 [vector.rs](../crates/orvalith-core/src/vector.rs) (formas, caminhos Bézier, cobertura e renderização com `tiny-skia`, booleanas), [text.rs](../crates/orvalith-core/src/text.rs) (`cosmic-text`: fontes do sistema, modelagem, fallback), [source.rs](../crates/orvalith-core/src/source.rs) (`LayerSource` + limites) e [vecops.rs](../crates/orvalith-core/src/vecops.rs) (criar/atualizar/rasterizar/combinar, máscara vetorial). A camada continua do tamanho da tela com pixels renderizados; `Layer.source` guarda a especificação editável e `rerender` regera os pixels. Operações que não preservam a origem pedem rasterização. UI: [vectool.rs](../crates/orvalith/src/vectool.rs).
 
+## Ajustes e cor (Estágio 9)
+[adjust.rs](../crates/orvalith-core/src/adjust.rs) (`Adjustment`, `Prepared` com LUT para ajustes por canal), [adjops.rs](../crates/orvalith-core/src/adjops.rs) (camada de ajuste, aplicação destrutiva com seleção), [histogram.rs](../crates/orvalith-core/src/histogram.rs) e [color.rs](../crates/orvalith-core/src/color.rs) (`moxcms`: inspeção, conversão RGBA8, `Preview`, `ColorEdit`). `Layer.adjustment` marca camadas de ajuste; `compose.rs` aplica o ajuste ao que já está no buffer (alfa intacto) com opacidade, modo, máscara e recorte (no recorte age só sobre a base). `Document.icc` é o perfil atribuído (`None` = sRGB). UI: [adjustui.rs](../crates/orvalith/src/adjustui.rs) (editor compartilhado, sessão destrutiva com prévia, histograma, diálogo de perfil); a prévia de cor converte a região composta para sRGB em `render_composite`.
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).
