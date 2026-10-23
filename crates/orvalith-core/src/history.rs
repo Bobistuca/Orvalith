@@ -32,6 +32,13 @@ impl History {
         self.undone.clear();
     }
 
+    /// Registra um comando cuja alteração **já foi aplicada** (ex.: após arrastar um controle).
+    pub fn record(&mut self, doc: &mut Document, cmd: Box<dyn Command>) {
+        doc.touch();
+        self.done.push(cmd);
+        self.undone.clear();
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.done.is_empty()
     }
@@ -64,6 +71,16 @@ impl History {
             }
             None => false,
         }
+    }
+
+    /// Rótulo da próxima ação a desfazer.
+    pub fn undo_label(&self) -> Option<&str> {
+        self.done.last().map(|c| c.label())
+    }
+
+    /// Rótulo da próxima ação a refazer.
+    pub fn redo_label(&self) -> Option<&str> {
+        self.undone.last().map(|c| c.label())
     }
 
     /// Rótulos das ações realizadas, da mais antiga à mais recente.

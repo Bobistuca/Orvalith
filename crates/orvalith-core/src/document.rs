@@ -8,6 +8,11 @@ fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Garante que IDs novos não colidam com um ID restaurado de arquivo.
+pub(crate) fn reserve_id(id: u64) {
+    NEXT_ID.fetch_max(id.saturating_add(1), Ordering::Relaxed);
+}
+
 /// Identificador estável de documento (válido durante a sessão).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DocumentId(pub u64);
@@ -123,6 +128,23 @@ impl Document {
             modified: false,
             revision: 0,
         })
+    }
+
+    /// Monta um documento a partir de partes já validadas (abertura de arquivo).
+    pub fn from_parts(name: String, width: u32, height: u32, ppi: f32, layers: Vec<Layer>) -> Self {
+        for l in &layers {
+            reserve_id(l.id.0);
+        }
+        Self {
+            id: DocumentId(next_id()),
+            name,
+            width,
+            height,
+            ppi,
+            layers,
+            modified: false,
+            revision: 0,
+        }
     }
 
     /// Registra uma edição: marca como modificado e avança a revisão.

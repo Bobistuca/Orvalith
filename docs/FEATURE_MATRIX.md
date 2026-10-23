@@ -17,5 +17,12 @@ tags: [orvalith, matriz]
 | Preferências (tema, escala da UI, tamanho da janela) | 1 | partial | testes de `prefs.rs` (ida e volta, arquivo corrompido, faixa) | sem atalhos/memória/autosave configuráveis |
 | Atalhos sensíveis a foco de texto | 1 | partial | usa `egui_wants_keyboard_input` | sem teste automatizado de UI |
 | Barra de status (zoom %, tamanho, coordenadas do cursor) | 1 | partial | código | — |
-| Abrir/salvar PNG, JPEG, .orva | 2 | planned | — | — |
+| Abrir PNG/JPEG (EXIF, limites de memória, aviso de redução de bits) | 2 | partial | testes de `imageio.rs`; diálogo e arrastar-e-soltar não exercitados manualmente | sem ICC; só 8 bits |
+| Salvar/Salvar como/reabrir `.orva` | 2 | partial | testes de `orva.rs` e `io.rs` (ida e volta, corrupção, versão, bomba) | diálogos nativos não exercitados; leitura/gravação na thread da UI |
+| Exportar PNG (alfa) e JPEG (qualidade, fundo) | 2 | partial | testes de `imageio.rs` | sem prévia/tamanho estimado, sem ICC |
+| Escrita atômica | 2 | validated | `fsio.rs`: falha simulada preserva o arquivo anterior | — |
+| Histórico ligado à UI (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y) com visibilidade e opacidade de camada | 2 | partial | testes de `edit.rs`; um arrasto = uma ação | só propriedades de camada existem como ações |
+| Indicador de modificado, confirmação ao fechar aba/sair (Salvar/Descartar/Cancelar) | 2 | partial | código | sem teste automatizado de UI |
+| Autosave/recuperação opcional (desligado por padrão), apagar cópias | 2 | partial | `scan_recovery` testado; cópia em thread | autosave e recuperação ao iniciar não exercitados manualmente |
+| Recentes (opcional, apagável) | 2 | partial | testes de `prefs.rs` | — |
 | Demais estágios (3–16) | 3–16 | planned | — | ver [[ROADMAP]] |

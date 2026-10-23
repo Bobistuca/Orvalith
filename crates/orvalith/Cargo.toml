@@ -8,5 +8,6 @@ description = "Orvalith - editor de imagens desktop, local e sem login"
 [dependencies]
 eframe = "0.37.0"
 orvalith-core = { path = "../orvalith-core" }
+rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

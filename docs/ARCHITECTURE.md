@@ -18,5 +18,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 - Histórico por documento; cada `Command` é uma ação atômica (um traço = um comando).
 - Precisão interna futura: evoluir para 16 bits/float sem converter silenciosamente para 8 bits (pendente).
 
+## Arquivos (Estágio 2)
+[orva.rs](../crates/orvalith-core/src/orva.rs) (formato, [[docs/ORVA_FORMAT]]), [imageio.rs](../crates/orvalith-core/src/imageio.rs) (PNG/JPEG), [fsio.rs](../crates/orvalith-core/src/fsio.rs) (escrita atômica), [edit.rs](../crates/orvalith-core/src/edit.rs) (comandos de camada). `History::record` registra uma ação já aplicada (arrasto de controle = uma ação). UI de arquivos em [io.rs](../crates/orvalith/src/app/io.rs).
+
 ## Pendente
-Tiles, compositor GPU (wgpu), jobs em segundo plano, formato `.orva` (Estágio 2).
+Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

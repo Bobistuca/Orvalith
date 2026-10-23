@@ -13,7 +13,17 @@ pub struct Prefs {
     pub dark_theme: bool,
     pub ui_scale: f32,
     pub window_size: [f32; 2],
+    /// Autosave/recuperação local: desligado por padrão.
+    pub autosave_enabled: bool,
+    pub autosave_secs: u32,
+    /// Pasta das cópias de recuperação; `None` usa a pasta padrão do aplicativo.
+    pub recovery_dir: Option<String>,
+    /// Lista de arquivos recentes (opcional e apagável).
+    pub recent_enabled: bool,
+    pub recent: Vec<String>,
 }
+
+pub const MAX_RECENT: usize = 8;
 
 impl Default for Prefs {
     fn default() -> Self {
@@ -21,6 +31,11 @@ impl Default for Prefs {
             dark_theme: true,
             ui_scale: 1.0,
             window_size: [1280.0, 800.0],
+            autosave_enabled: false,
+            autosave_secs: 120,
+            recovery_dir: None,
+            recent_enabled: true,
+            recent: Vec::new(),
         }
     }
 }
@@ -40,6 +55,8 @@ impl Prefs {
         }
         self.window_size[0] = self.window_size[0].clamp(800.0, 8000.0);
         self.window_size[1] = self.window_size[1].clamp(500.0, 8000.0);
+        self.autosave_secs = self.autosave_secs.clamp(15, 3600);
+        self.recent.truncate(MAX_RECENT);
         self
     }
 
@@ -61,6 +78,25 @@ impl Prefs {
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(&tmp, json)?;
         std::fs::rename(&tmp, path)
+    }
+
+    /// Registra um arquivo recente (se a lista estiver habilitada).
+    pub fn add_recent(&mut self, path: &Path) {
+        if !self.recent_enabled {
+            return;
+        }
+        let p = path.to_string_lossy().into_owned();
+        self.recent.retain(|r| *r != p);
+        self.recent.insert(0, p);
+        self.recent.truncate(MAX_RECENT);
+    }
+
+    /// Pasta efetiva das cópias de recuperação.
+    pub fn recovery_path(&self) -> Option<PathBuf> {
+        match &self.recovery_dir {
+            Some(d) if !d.is_empty() => Some(PathBuf::from(d)),
+            _ => config_path().and_then(|c| c.parent().map(|p| p.join("recovery"))),
+        }
     }
 
     pub fn load() -> Self {
@@ -106,11 +142,32 @@ mod tests {
             dark_theme: false,
             ui_scale: 1.5,
             window_size: [1400.0, 900.0],
+            autosave_enabled: true,
+            autosave_secs: 60,
+            recent: vec!["a.orva".into()],
+            ..Prefs::default()
         };
         prefs.save_to(&p).unwrap();
         assert_eq!(Prefs::load_from(&p), prefs);
         assert!(!p.with_extension("json.tmp").exists());
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn autosave_is_off_by_default_and_recent_is_bounded() {
+        let mut p = Prefs::default();
+        assert!(!p.autosave_enabled);
+        for i in 0..20 {
+            p.add_recent(Path::new(&format!("f{i}.orva")));
+        }
+        p.add_recent(Path::new("f15.orva"));
+        assert_eq!(p.recent.len(), MAX_RECENT);
+        assert_eq!(p.recent[0], "f15.orva");
+        assert_eq!(p.recent.iter().filter(|r| *r == "f15.orva").count(), 1);
+        p.recent_enabled = false;
+        p.recent.clear();
+        p.add_recent(Path::new("x.orva"));
+        assert!(p.recent.is_empty());
     }
 
     #[test]

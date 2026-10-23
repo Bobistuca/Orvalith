@@ -12,8 +12,13 @@ const STEP: f32 = 1.25;
 /// Documento aberto com histórico e estado de visualização.
 pub struct OpenDoc {
     pub doc: Document,
-    #[allow(dead_code)] // ligado à UI no Estágio 2
     pub history: History,
+    /// Caminho do projeto `.orva` salvo (None = nunca salvo).
+    pub path: Option<std::path::PathBuf>,
+    /// Arrasto de opacidade em andamento: (camada, valor original).
+    pub opacity_drag: Option<(orvalith_core::LayerId, f32)>,
+    /// Última revisão gravada na cópia de recuperação.
+    pub autosaved_rev: Option<u64>,
     texture: Option<(u64, egui::TextureHandle)>,
     view: Option<View>,
     /// Enquanto verdadeiro, o documento é reajustado à janela quando ela muda de tamanho.
@@ -27,6 +32,9 @@ impl OpenDoc {
         Self {
             doc,
             history: History::new(),
+            path: None,
+            opacity_drag: None,
+            autosaved_rev: None,
             texture: None,
             view: None,
             fit_mode: true,

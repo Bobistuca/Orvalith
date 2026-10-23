@@ -6,3 +6,8 @@ license.workspace = true
 description = "Modelo de documento, camadas, historico e composicao do Orvalith"
 
 [dependencies]
+crc32fast = "1.5.3"
+flate2 = "1.1.10"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"

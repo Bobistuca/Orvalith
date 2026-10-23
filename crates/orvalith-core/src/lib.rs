@@ -5,7 +5,11 @@
 
 pub mod compose;
 pub mod document;
+pub mod edit;
+pub mod fsio;
 pub mod history;
+pub mod imageio;
+pub mod orva;
 pub mod view;
 
 pub use document::{Document, DocumentId, Layer, LayerId};
