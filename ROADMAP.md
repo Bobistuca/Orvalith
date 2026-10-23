@@ -21,7 +21,7 @@ Estados: planned · in progress · partial · validated · blocked. Detalhes de 
 | 9 | Ajustes e gerenciamento de cor | 4 | partial |
 | 10 | Retoque e filtros clássicos | 5, 9 | partial |
 | 11 | Efeitos, recursos editáveis, objetos embutidos | 8, 9 | partial |
-| 12 | Imagens, PDF, PSD/PSB, .pcraft | 4, 7, 8 | planned |
+| 12 | Imagens, PDF, PSD/PSB, .pcraft | 4, 7, 8 | partial |
 | 13 | Animação e linha do tempo | 4 | planned |
 | 14 | Vídeo e áudio básicos | 13 | planned |
 | 15 | Produtividade | todos | planned |

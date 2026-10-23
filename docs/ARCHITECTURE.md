@@ -57,5 +57,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Composições (Estágio 11.3)
 [comps.rs](../crates/orvalith-core/src/comps.rs): `Comp` (estado visual por camada), `capture`/`apply`/`matches` e `CompsEdit` (comando de histórico). UI: [compsui.rs](../crates/orvalith/src/compsui.rs).
 
+## Formatos (Estágio 12)
+[formats.rs](../crates/orvalith-core/src/formats.rs): `Format`, tabela `FORMATS` (a mesma da documentação), `detect` (por conteúdo; TGA só pela extensão), `import`/`export` (+`ExportOpts`, avisos), SVG (resvg), OpenRaster (zip), `sprite_sheet`. `imageio.rs` guarda os codecs raster (`image`) e o tratamento de perfil ICC/animação/HDR.
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

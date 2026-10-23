@@ -14,6 +14,7 @@ pub mod document;
 pub mod edit;
 pub mod fill;
 pub mod filter;
+pub mod formats;
 pub mod fsio;
 pub mod geom;
 pub mod histogram;

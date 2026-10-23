@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use orvalith_core::{fsio, imageio, orva, Document};
+use orvalith_core::formats::{self, Format};
+use orvalith_core::{fsio, orva, Document};
 
 use super::{ExportForm, OrvalithApp};
 use crate::canvas::OpenDoc;
@@ -44,15 +45,14 @@ fn load_file(path: &Path) -> Result<Loaded, String> {
                 project: true,
             })
         }
-        "png" | "jpg" | "jpeg" | "jpe" | "jfif" => {
-            let imp = imageio::import(&bytes, &stem(path))?;
+        _ => {
+            let imp = formats::import(&bytes, &stem(path), &ext)?;
             Ok(Loaded {
                 doc: imp.document,
                 warnings: imp.warnings,
                 project: false,
             })
         }
-        _ => Err("formato ainda não suportado (nesta versão: .orva, PNG e JPEG)".into()),
     }
 }
 
@@ -97,14 +97,23 @@ impl OrvalithApp {
     }
 
     pub(super) fn open_dialog(&mut self) {
-        let picked = rfd::FileDialog::new()
-            .add_filter(
-                "Projetos e imagens",
-                &["orva", "png", "jpg", "jpeg", "jpe", "jfif"],
-            )
-            .add_filter("Projeto Orvalith", &["orva"])
-            .add_filter("Imagens PNG/JPEG", &["png", "jpg", "jpeg", "jpe", "jfif"])
-            .pick_file();
+        let mut all: Vec<&str> = vec!["orva"];
+        for i in formats::FORMATS
+            .iter()
+            .filter(|i| i.read != formats::Level::No)
+        {
+            all.extend_from_slice(i.exts);
+        }
+        let mut dlg = rfd::FileDialog::new()
+            .add_filter("Projetos e imagens", &all)
+            .add_filter("Projeto Orvalith", &["orva"]);
+        for i in formats::FORMATS
+            .iter()
+            .filter(|i| i.read != formats::Level::No && i.format != Format::Orva)
+        {
+            dlg = dlg.add_filter(i.name, i.exts);
+        }
+        let picked = dlg.pick_file();
         if let Some(p) = picked {
             self.open_path(p);
         }
@@ -205,48 +214,125 @@ impl OrvalithApp {
         true
     }
 
-    /// Exporta a imagem composta (PNG/JPEG) sem alterar o projeto nem o estado "modificado".
+    /// Exporta a imagem composta no formato escolhido sem alterar o projeto nem o estado "modificado".
     pub(super) fn export_doc(&mut self, form: &ExportForm) {
         let Some(open) = self.docs.get(self.active) else {
             return;
         };
-        let (ext, label) = if form.jpeg {
-            ("jpg", "JPEG")
-        } else {
-            ("png", "PNG")
-        };
+        let info = formats::info(form.format);
         let Some(path) = rfd::FileDialog::new()
-            .add_filter(
-                label,
-                if form.jpeg {
-                    &["jpg", "jpeg"]
-                } else {
-                    &["png"]
-                },
-            )
-            .set_file_name(format!("{}.{ext}", open.doc.name))
+            .add_filter(info.name, info.exts)
+            .set_file_name(format!("{}.{}", open.doc.name, form.format.default_ext()))
             .save_file()
         else {
             return;
         };
-        let path = if form.jpeg
-            && path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("jpeg"))
-        {
+        let keep = path
+            .extension()
+            .is_some_and(|e| info.exts.iter().any(|x| e.eq_ignore_ascii_case(x)));
+        let path = if keep {
             path
         } else {
-            with_extension(path, ext)
+            with_extension(path, form.format.default_ext())
         };
-        let result = if form.jpeg {
-            imageio::export_jpeg_with(&open.doc, form.quality, form.background, form.color)
-        } else {
-            imageio::export_png_with(&open.doc, form.color)
-        };
-        match result.and_then(|b| fsio::atomic_write(&path, &b).map_err(|e| e.to_string())) {
-            Ok(()) => self.show_message("Exportação concluída", path.display().to_string()),
+        let result = formats::export(&open.doc, form.format, &form.opts());
+        match result.and_then(|e| {
+            fsio::atomic_write(&path, &e.bytes).map_err(|x| x.to_string())?;
+            Ok(e.warnings)
+        }) {
+            Ok(w) => {
+                let mut text = path.display().to_string();
+                if !w.is_empty() {
+                    text.push_str("\n\nObservações:\n- ");
+                    text.push_str(&w.join("\n- "));
+                }
+                self.show_message("Exportação concluída", text);
+            }
             Err(e) => self.show_message("Erro ao exportar", format!("{}\n\n{e}", path.display())),
         }
+    }
+
+    /// Caminho livre em `dir` (acrescenta " (n)" para nunca sobrescrever arquivos existentes).
+    fn free_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+        let clean: String = stem
+            .chars()
+            .map(|c| if "\\/:*?\"<>|".contains(c) { '_' } else { c })
+            .collect();
+        let mut p = dir.join(format!("{clean}.{ext}"));
+        let mut n = 2;
+        while p.exists() {
+            p = dir.join(format!("{clean} ({n}).{ext}"));
+            n += 1;
+        }
+        p
+    }
+
+    /// Lote: exporta todos os documentos abertos, as camadas ou uma folha de sprites para uma pasta.
+    pub(super) fn export_batch(&mut self, form: &ExportForm, what: super::BatchKind) {
+        let Some(dir) = rfd::FileDialog::new().pick_folder() else {
+            return;
+        };
+        let ext = form.format.default_ext();
+        let opts = form.opts();
+        let mut written = Vec::new();
+        let mut errors = Vec::new();
+        let mut put = |name: &str, doc: &Document| match formats::export(doc, form.format, &opts) {
+            Ok(e) => {
+                let p = Self::free_path(&dir, name, ext);
+                match fsio::atomic_write(&p, &e.bytes) {
+                    Ok(()) => written.push(p),
+                    Err(x) => errors.push(format!("{name}: {x}")),
+                }
+            }
+            Err(x) => errors.push(format!("{name}: {x}")),
+        };
+        match what {
+            super::BatchKind::AllDocs => {
+                for o in &self.docs {
+                    put(&o.doc.name, &o.doc);
+                }
+            }
+            super::BatchKind::Layers => {
+                if let Some(o) = self.docs.get(self.active) {
+                    for (i, l) in o
+                        .doc
+                        .layers
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, l)| !l.is_group() && l.adjustment.is_none())
+                    {
+                        let mut single = Document::from_parts(
+                            l.name.clone(),
+                            o.doc.width,
+                            o.doc.height,
+                            o.doc.ppi,
+                            vec![l.clone()],
+                        );
+                        single.layers[0].parent = None;
+                        single.icc = o.doc.icc.clone();
+                        put(&format!("{:02}_{}", i + 1, l.name), &single);
+                    }
+                }
+            }
+            super::BatchKind::Sprites(cols) => {
+                if let Some(o) = self.docs.get(self.active) {
+                    match formats::sprite_sheet(&o.doc, cols, 0) {
+                        Ok(sheet) => put(&sheet.name.clone(), &sheet),
+                        Err(e) => errors.push(e),
+                    }
+                }
+            }
+        }
+        let mut text = format!(
+            "{} arquivo(s) gravado(s) em {}.",
+            written.len(),
+            dir.display()
+        );
+        if !errors.is_empty() {
+            text.push_str("\n\nFalhas:\n- ");
+            text.push_str(&errors.join("\n- "));
+        }
+        self.show_message("Exportação em lote", text);
     }
 
     // ---- Autosave e recuperação (opcionais; desligados por padrão) ----

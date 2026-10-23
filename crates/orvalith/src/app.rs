@@ -39,9 +39,32 @@ struct NewDocForm {
 
 struct ExportForm {
     color: orvalith_core::imageio::ColorOut,
-    jpeg: bool,
+    format: orvalith_core::formats::Format,
     quality: u8,
     background: [u8; 3],
+    /// 0 = tamanho original.
+    max_side: u32,
+    sprite_cols: u32,
+    estimate: Option<String>,
+}
+
+impl ExportForm {
+    fn opts(&self) -> orvalith_core::formats::ExportOpts {
+        orvalith_core::formats::ExportOpts {
+            quality: self.quality,
+            background: self.background,
+            color: self.color,
+            max_side: (self.max_side > 0).then_some(self.max_side),
+        }
+    }
+}
+
+/// O que o lote exporta.
+#[derive(Clone, Copy)]
+pub(crate) enum BatchKind {
+    AllDocs,
+    Layers,
+    Sprites(u32),
 }
 
 /// Atalho: modificadores, tecla e a ação que dispara.
@@ -240,9 +263,12 @@ impl OrvalithApp {
                 if !self.docs.is_empty() && self.export.is_none() {
                     self.export = Some(ExportForm {
                         color: orvalith_core::imageio::ColorOut::Embed,
-                        jpeg: false,
+                        format: orvalith_core::formats::Format::Png,
                         quality: 90,
                         background: [255, 255, 255],
+                        max_side: 0,
+                        sprite_cols: 4,
+                        estimate: None,
                     });
                 }
             }
@@ -1234,45 +1260,110 @@ impl OrvalithApp {
         }
 
         if let Some(mut form) = self.export.take() {
+            use orvalith_core::formats::{self, Format};
             let mut go = false;
             let mut cancel = false;
+            let mut batch = None;
+            let mut estimate = false;
             egui::Window::new("Exportar imagem")
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut form.jpeg, false, "PNG");
-                        ui.selectable_value(&mut form.jpeg, true, "JPEG");
-                    });
-                    if form.jpeg {
+                    let before = form.format;
+                    egui::ComboBox::from_label("Formato")
+                        .selected_text(formats::info(form.format).name)
+                        .show_ui(ui, |ui| {
+                            for f in Format::exportable() {
+                                ui.selectable_value(&mut form.format, f, formats::info(f).name);
+                            }
+                        });
+                    if form.format != before {
+                        form.estimate = None;
+                    }
+                    ui.small(formats::info(form.format).note);
+                    if matches!(form.format, Format::Jpeg) {
                         ui.horizontal(|ui| {
                             ui.label("Qualidade");
                             ui.add(egui::Slider::new(&mut form.quality, 1..=100));
                         });
+                    }
+                    if matches!(form.format, Format::Jpeg | Format::Pnm) {
                         ui.horizontal(|ui| {
                             ui.label("Fundo");
                             ui.color_edit_button_srgb(&mut form.background);
                         });
-                        ui.small("JPEG não tem transparência: áreas transparentes são compostas sobre o fundo.");
-                    } else {
-                        ui.small("PNG preserva a transparência (8 bits por canal).");
                     }
-                    if let Some(p) = self.docs.get(self.active).and_then(|d| d.doc.icc.as_ref()) {
-                        use orvalith_core::imageio::ColorOut;
-                        ui.separator();
-                        ui.label(format!("Perfil do documento: {}", p.name));
-                        ui.radio_value(&mut form.color, ColorOut::Embed, "Embutir o perfil (pixels intactos)");
-                        ui.radio_value(&mut form.color, ColorOut::ToSrgb, "Converter para sRGB");
-                        ui.radio_value(&mut form.color, ColorOut::Strip, "Gravar sem perfil (sem converter)");
-                        ui.separator();
+                    if form.format != Format::Ora {
+                        ui.horizontal(|ui| {
+                            ui.label("Lado máximo (px, 0 = original)");
+                            ui.add(egui::DragValue::new(&mut form.max_side).range(0..=16384).speed(8.0));
+                        });
                     }
-                    ui.small("Exportar não altera o projeto nem o estado de alterações não salvas.");
+                    if let Some(open) = self.docs.get(self.active) {
+                        let d = &open.doc;
+                        ui.small(format!(
+                            "Dimensões: {} × {} px · {:.0} ppi · perfil: {}",
+                            d.width,
+                            d.height,
+                            d.ppi,
+                            d.icc.as_ref().map_or("sRGB (sem perfil)", |p| p.name.as_str())
+                        ));
+                        if let Some(p) = d.icc.as_ref() {
+                            use orvalith_core::imageio::ColorOut;
+                            ui.separator();
+                            ui.label(format!("Perfil do documento: {}", p.name));
+                            ui.radio_value(&mut form.color, ColorOut::Embed, "Embutir o perfil (pixels intactos)");
+                            ui.radio_value(&mut form.color, ColorOut::ToSrgb, "Converter para sRGB");
+                            ui.radio_value(&mut form.color, ColorOut::Strip, "Gravar sem perfil (sem converter)");
+                        }
+                        let w = formats::export_warnings(d, form.format, &form.opts());
+                        if !w.is_empty() {
+                            ui.separator();
+                            for line in w {
+                                ui.colored_label(ui.visuals().warn_fg_color, format!("• {line}"));
+                            }
+                        }
+                    }
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        estimate = ui.button("Estimar tamanho").clicked();
+                        if let Some(t) = &form.estimate {
+                            ui.label(t);
+                        }
+                    });
+                    ui.small("Exportar não altera o projeto nem o arquivo original; arquivos existentes não são sobrescritos sem confirmação do sistema.");
+                    ui.separator();
+                    ui.label("Lote (usa o formato e as opções acima)");
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("Todos os documentos abertos…").clicked() {
+                            batch = Some(BatchKind::AllDocs);
+                        }
+                        if ui.button("Cada camada…").clicked() {
+                            batch = Some(BatchKind::Layers);
+                        }
+                        if ui.button("Folha de sprites…").clicked() {
+                            batch = Some(BatchKind::Sprites(form.sprite_cols));
+                        }
+                        ui.add(egui::DragValue::new(&mut form.sprite_cols).range(1..=64).prefix("colunas "));
+                    });
                     ui.horizontal(|ui| {
                         go = ui.button("Escolher destino…").clicked();
-                        cancel = ui.button("Cancelar").clicked();
+                        cancel = ui.button("Fechar").clicked();
                     });
                 });
-            if go {
+            if estimate {
+                form.estimate = Some(match self.docs.get(self.active) {
+                    Some(o) => match formats::export(&o.doc, form.format, &form.opts()) {
+                        Ok(e) => format!("≈ {:.1} KiB", e.bytes.len() as f64 / 1024.0),
+                        Err(e) => format!("indisponível: {e}"),
+                    },
+                    None => String::new(),
+                });
+            }
+            if let Some(kind) = batch {
+                self.export_batch(&form, kind);
+                self.export = Some(form);
+            } else if go {
                 self.export_doc(&form);
             } else if !cancel {
                 self.export = Some(form);
@@ -1648,7 +1739,13 @@ impl OrvalithApp {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Imagens", &["png", "jpg", "jpeg", "jpe", "jfif"])
+            .add_filter(
+                "Imagens",
+                &[
+                    "png", "jpg", "jpeg", "jpe", "jfif", "webp", "gif", "bmp", "tif", "tiff",
+                    "tga", "ico", "qoi",
+                ],
+            )
             .pick_file()
         else {
             return;
@@ -1681,7 +1778,13 @@ impl OrvalithApp {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Imagens", &["png", "jpg", "jpeg", "jpe", "jfif"])
+            .add_filter(
+                "Imagens",
+                &[
+                    "png", "jpg", "jpeg", "jpe", "jfif", "webp", "gif", "bmp", "tif", "tiff",
+                    "tga", "ico", "qoi",
+                ],
+            )
             .pick_file()
         else {
             return;

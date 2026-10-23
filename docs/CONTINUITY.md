@@ -5,8 +5,8 @@ tags: [orvalith, continuidade]
 ---
 # Continuidade
 
-- **Estágio atual:** 11 (11.1 estilos/preenchimentos, 11.2 objetos inteligentes e filtros editáveis, 11.3 composições) concluído como *partial* → próximo: Estágio 12.
-- **Funciona:** fmt, clippy -D warnings, 351 testes (núcleo 253 + app 98) e build release OK; app abre/fecha (smoke). Texto/formas/caneta/nós só com eventos sintéticos e testes de núcleo. Pintura com mouse real NÃO foi exercitada (só testes de núcleo e de `ToolState::handle` com eventos sintéticos). Abrir/salvar/exportar via diálogos nativos NÃO foi exercitado manualmente; janela abre e fecha gravando `config.json`; canvas com zoom/pan/abas/status. Interação com mouse não foi exercitada automaticamente.
+- **Estágio atual:** 12.1 (imagens comuns/web, exportação, lote) concluída como *partial*; faltam 12.2 (PDF), 12.3 (PSD/PSB), 12.4 (.pcraft) e 12.5 (evidências).
+- **Funciona:** fmt, clippy -D warnings, 360 testes (núcleo 262 + app 98) e build release OK; app abre/fecha (smoke). Texto/formas/caneta/nós só com eventos sintéticos e testes de núcleo. Pintura com mouse real NÃO foi exercitada (só testes de núcleo e de `ToolState::handle` com eventos sintéticos). Abrir/salvar/exportar via diálogos nativos NÃO foi exercitado manualmente; janela abre e fecha gravando `config.json`; canvas com zoom/pan/abas/status. Interação com mouse não foi exercitada automaticamente.
 - **Arquivos-chave:** `crates/orvalith-core/src/{document,compose,history}.rs`, `crates/orvalith/src/{main,app,app/io,canvas,prefs,theme}.rs`, `crates/orvalith-core/src/{orva,imageio,fsio,edit,view,paint,fill,geom,blend,compose,layerops,selection,transform,docops,snap,maskops}.rs`, `crates/orvalith/src/{tools,canvas,layers_ui,select,geometry}.rs`, `crates/orvalith/src/app/{io,selops,geocmds}.rs`.
 - **Executar:** `cargo run -p orvalith` (PATH: `%USERPROFILE%\.cargo\bin`).
 - **Ambiente:** Rust 1.99.1 via rustup; VS Build Tools 2022 instalado via winget (workload C++).

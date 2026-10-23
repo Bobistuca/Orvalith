@@ -1,4 +1,5 @@
-//! Importação e exportação de imagens (PNG e JPEG) com limites de memória.
+//! Importação e exportação de imagens rasterizadas (via crate `image`) com limites de memória.
+//! A escolha do formato e os formatos especiais (SVG, ORA, PSD, PDF) ficam em `formats.rs`.
 
 use std::io::Cursor;
 
@@ -16,6 +17,7 @@ use crate::document::{Document, Layer};
 const MAX_IMPORT_PIXELS: u64 = 400_000_000;
 
 /// Resultado de uma importação.
+#[derive(Debug)]
 pub struct Imported {
     pub document: Document,
     /// Avisos para o usuário (ex.: redução de profundidade de bits).
@@ -26,25 +28,69 @@ fn bits_per_channel(ct: ColorType) -> u32 {
     u32::from(ct.bits_per_pixel()) / u32::from(ct.channel_count())
 }
 
-/// Decodifica PNG/JPEG de bytes, aplicando a orientação EXIF.
+/// Decodifica uma imagem de bytes (formato reconhecido pelo conteúdo), aplicando a orientação EXIF.
 pub fn import(bytes: &[u8], name: &str) -> Result<Imported, String> {
+    import_as(bytes, name, None)
+}
+
+/// Quadros além do primeiro numa imagem animada (GIF, APNG, WebP): só o primeiro é importado.
+fn is_animated(bytes: &[u8], f: image::ImageFormat) -> bool {
+    use image::codecs::{gif::GifDecoder, png::PngDecoder, webp::WebPDecoder};
+    use image::AnimationDecoder;
+    match f {
+        image::ImageFormat::Gif => GifDecoder::new(Cursor::new(bytes))
+            .map(|d| d.into_frames().take(2).count() > 1)
+            .unwrap_or(false),
+        image::ImageFormat::Png => PngDecoder::new(Cursor::new(bytes))
+            .ok()
+            .and_then(|d| d.is_apng().ok())
+            .unwrap_or(false),
+        image::ImageFormat::WebP => WebPDecoder::new(Cursor::new(bytes))
+            .map(|d| d.has_animation())
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Codifica um valor linear (0..=1) em sRGB de 8 bits.
+fn lin_to_srgb8(v: f32) -> u8 {
+    let v = if v.is_finite() {
+        v.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let e = if v <= 0.003_130_8 {
+        v * 12.92
+    } else {
+        1.055 * v.powf(1.0 / 2.4) - 0.055
+    };
+    (e * 255.0 + 0.5) as u8
+}
+
+/// Como [`import`], com o formato forçado (necessário para formatos sem assinatura, como TGA).
+pub fn import_as(
+    bytes: &[u8],
+    name: &str,
+    forced: Option<image::ImageFormat>,
+) -> Result<Imported, String> {
     let mut limits = Limits::default();
     limits.max_image_width = Some(Document::MAX_SIDE);
     limits.max_image_height = Some(Document::MAX_SIDE);
     limits.max_alloc = Some(2 * 1024 * 1024 * 1024);
-    let mut reader = ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|e| e.to_string())?;
+    let mut reader = match forced {
+        Some(f) => ImageReader::with_format(Cursor::new(bytes), f),
+        None => ImageReader::new(Cursor::new(bytes))
+            .with_guessed_format()
+            .map_err(|e| e.to_string())?,
+    };
     reader.limits(limits);
-    match reader.format() {
-        Some(image::ImageFormat::Png | image::ImageFormat::Jpeg) => {}
-        Some(other) => {
-            return Err(format!(
-                "Formato {other:?} ainda não é suportado (apenas PNG e JPEG nesta versão)."
-            ))
-        }
-        None => return Err("Formato de imagem não reconhecido.".into()),
+    let Some(format) = reader.format() else {
+        return Err("Formato de imagem não reconhecido.".into());
+    };
+    if !image::ImageFormat::all().any(|f| f == format && f.reading_enabled()) {
+        return Err(format!("Formato {format:?} não é suportado nesta versão."));
     }
+    let animated = is_animated(bytes, format);
     let mut decoder = reader
         .into_decoder()
         .map_err(|e| format!("Imagem inválida: {e}"))?;
@@ -71,7 +117,35 @@ pub fn import(bytes: &[u8], name: &str) -> Result<Imported, String> {
     if orientation != image::metadata::Orientation::NoTransforms {
         warnings.push("A orientação EXIF da imagem foi aplicada.".to_string());
     }
-    let rgba = img.to_rgba8();
+    if animated {
+        warnings.push(
+            "A imagem é animada: só o primeiro quadro foi importado (a linha do tempo vem no Estágio 13)."
+                .to_string(),
+        );
+    }
+    let rgba = if matches!(
+        format,
+        image::ImageFormat::Hdr | image::ImageFormat::OpenExr
+    ) {
+        warnings.push(
+            "Imagem de alto alcance dinâmico (linear): convertida para sRGB de 8 bits; valores acima de 1,0 foram cortados e a precisão reduzida."
+                .to_string(),
+        );
+        let f = img.to_rgba32f();
+        let (w, h) = f.dimensions();
+        let mut out = Vec::with_capacity(w as usize * h as usize * 4);
+        for p in f.pixels() {
+            out.extend_from_slice(&[
+                lin_to_srgb8(p[0]),
+                lin_to_srgb8(p[1]),
+                lin_to_srgb8(p[2]),
+                (p[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+            ]);
+        }
+        image::RgbaImage::from_raw(w, h, out).ok_or("Falha ao converter a imagem.")?
+    } else {
+        img.to_rgba8()
+    };
     let (w, h) = rgba.dimensions();
     let layer = Layer::from_pixels(name, w, h, rgba.into_raw());
     let mut document = Document::from_parts(name.to_string(), w, h, 72.0, vec![layer]);
@@ -119,7 +193,7 @@ pub enum ColorOut {
 }
 
 /// Compõe e prepara o perfil a embutir conforme `mode`.
-fn flatten_for_export(
+pub(crate) fn flatten_for_export(
     doc: &Document,
     mode: ColorOut,
 ) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
