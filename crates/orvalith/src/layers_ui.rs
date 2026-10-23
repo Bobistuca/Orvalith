@@ -4,6 +4,8 @@ use eframe::egui;
 use orvalith_core::edit::{LayersEdit, SetVisible};
 use orvalith_core::layerops::{self, Outcome};
 use orvalith_core::maskops::{self, MaskInit};
+use orvalith_core::vecops;
+use orvalith_core::vector::BoolOp;
 use orvalith_core::{BlendMode, Layer, LayerId};
 
 use crate::canvas::OpenDoc;
@@ -33,6 +35,10 @@ pub enum LayerCmd {
     RefineMask,
     ToggleClip,
     ToggleMaskView,
+    Rasterize,
+    Boolean(BoolOp),
+    VectorMask,
+    PathToSelection,
 }
 
 impl OpenDoc {
@@ -197,6 +203,53 @@ pub fn run(
                 |ls| ls[idx].clipped = !clipped,
             );
         }
+        LayerCmd::Rasterize => {
+            let Some(id) = active else { return nothing() };
+            match vecops::rasterize(&open.doc, id) {
+                Ok(layers) => open.edit_layers("Rasterizar camada", |ls| *ls = layers),
+                Err(e) => return Some(e),
+            }
+        }
+        LayerCmd::Boolean(op) => {
+            // A base é a camada mais baixa da seleção; a mais alta é o operando.
+            let mut ids = sel.clone();
+            ids.sort_by_key(|id| open.doc.index_of(*id));
+            let (Some(&a), Some(&b)) = (ids.first(), ids.last()) else {
+                return nothing();
+            };
+            match vecops::boolean_combine(&open.doc, a, b, op) {
+                Ok(o) => open.apply_outcome("Combinar formas", o),
+                Err(e) => return Some(e),
+            }
+        }
+        LayerCmd::VectorMask => {
+            let Some(id) = active else { return nothing() };
+            let Some(idx) = open.doc.index_of(id) else {
+                return nothing();
+            };
+            let parent = open.doc.layers[idx].parent;
+            let below = open.doc.layers[..idx]
+                .iter()
+                .rev()
+                .find(|l| l.parent == parent)
+                .map(|l| l.id);
+            match below {
+                Some(t) => match vecops::vector_mask_from_shape(&open.doc, id, t) {
+                    Ok(layers) => open.edit_layers("Máscara vetorial", |ls| *ls = layers),
+                    Err(e) => return Some(e),
+                },
+                None => return Some("Não há camada abaixo da forma.".into()),
+            }
+        }
+        LayerCmd::PathToSelection => {
+            let Some(id) = active else { return nothing() };
+            match vecops::shape_to_selection(&open.doc, id) {
+                Some(m) => {
+                    crate::select::set_selection(open, "Forma para seleção", Some(m));
+                }
+                None => return Some("A camada ativa não é uma forma editável.".into()),
+            }
+        }
         LayerCmd::ToggleMaskView => {
             let Some(id) = active else { return nothing() };
             if open.doc.layer(id).is_some_and(|l| l.mask.is_some()) {
@@ -323,7 +376,10 @@ fn end_prop_drag(open: &mut OpenDoc) {
                 }
                 _ => false,
             };
-            (a.opacity - b.opacity).abs() > 1e-6 || (a.fill - b.fill).abs() > 1e-6 || mask_changed
+            (a.opacity - b.opacity).abs() > 1e-6
+                || (a.fill - b.fill).abs() > 1e-6
+                || mask_changed
+                || a.source != b.source
         });
         if changed {
             let after = open.doc.layers.clone();
@@ -422,6 +478,32 @@ fn props_ui(ui: &mut egui::Ui, open: &mut OpenDoc) -> Vec<LayerCmd> {
         .changed()
     {
         cmds.push(LayerCmd::ToggleClip);
+    }
+    // ---- Origem editável (texto / forma) ----
+    if let Some(src) = open.doc.layers[idx].source.clone() {
+        ui.separator();
+        let mut s = src;
+        let mut filter = std::mem::take(&mut open.font_filter);
+        let changed = crate::vectool::source_props_ui(ui, &mut s, &mut filter);
+        open.font_filter = filter;
+        if changed {
+            begin_prop_drag(open, "Editar propriedades");
+            let (w, h) = (open.doc.width, open.doc.height);
+            let l = &mut open.doc.layers[idx];
+            if l.source.as_ref().map(|x| x.default_name()).as_deref() == Some(l.name.as_str()) {
+                l.name = s.default_name();
+            }
+            l.source = Some(s);
+            l.rerender(w, h);
+            open.doc.touch();
+        }
+        if ui
+            .small_button("Rasterizar")
+            .on_hover_text("Descarta a edição vetorial/texto e mantém os pixels")
+            .clicked()
+        {
+            cmds.push(LayerCmd::Rasterize);
+        }
     }
     ui.separator();
     // ---- Máscara de camada ----
@@ -602,6 +684,11 @@ fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) -> Vec<LayerCmd> {
                 (l.name.clone(), l.visible, l.is_group(), l.expanded);
             let locked = l.lock_pixels || l.lock_alpha || l.lock_position;
             let clipped = l.clipped;
+            let tag = match &l.source {
+                Some(orvalith_core::LayerSource::Text(_)) => "T ",
+                Some(orvalith_core::LayerSource::Shape(_)) => "F ",
+                None => "",
+            };
             let has_mask = l.mask.is_some();
             let mask_enabled = l.mask.as_ref().is_some_and(|m| m.enabled);
             let selected = open.selected.contains(id);
@@ -687,7 +774,11 @@ fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) -> Vec<LayerCmd> {
                         }
                     }
                 } else {
-                    let mut label = if clipped { format!("> {name}") } else { name };
+                    let mut label = if clipped {
+                        format!("> {tag}{name}")
+                    } else {
+                        format!("{tag}{name}")
+                    };
                     if locked {
                         label.push_str("  (bloq.)");
                     }
@@ -894,6 +985,13 @@ pub fn channels_ui(ui: &mut egui::Ui, open: &mut OpenDoc) {
 pub fn show(ui: &mut egui::Ui, open: &mut OpenDoc, busy: bool) -> Vec<LayerCmd> {
     update_thumbs(ui.ctx(), open, busy);
     let mut cmds = props_ui(ui, open);
+    // Edições contínuas (campos numéricos, cores, digitação) viram uma ação ao soltar o mouse/sair do campo.
+    if open.prop_drag.is_some()
+        && !ui.input(|i| i.pointer.any_down())
+        && !ui.ctx().egui_wants_keyboard_input()
+    {
+        end_prop_drag(open);
+    }
     ui.separator();
     let buttons: [(&str, LayerCmd, &str); 12] = [
         ("Nova", LayerCmd::New, "Nova camada (Ctrl+Shift+N)"),
@@ -1117,5 +1215,102 @@ mod tests {
         let t = mask_thumbnail(&vec![128u8; 200 * 100], 200, 100).unwrap();
         assert_eq!(t.size, [32, 16]);
         assert!(mask_thumbnail(&[0u8; 3], 4, 4).is_none());
+    }
+    #[test]
+    fn shape_layer_commands_rasterize_combine_and_convert() {
+        use orvalith_core::vector::{Geom, ShapeSpec};
+        use orvalith_core::{compose::pixel_at, LayerSource};
+        let mut o = open_with_two();
+        let rect = |x: f32| {
+            LayerSource::Shape(ShapeSpec::solid(
+                Geom::Rect {
+                    x,
+                    y: 0.0,
+                    w: 3.0,
+                    h: 3.0,
+                    radius: 0.0,
+                },
+                [0, 200, 0, 255],
+            ))
+        };
+        crate::vectool::VecState::add_layer(&mut o, rect(0.0), "Forma");
+        crate::vectool::VecState::add_layer(&mut o, rect(2.0), "Forma");
+        let (a, b) = (o.doc.layers[2].id, o.doc.layers[3].id);
+        o.selected = vec![b, a];
+        // Combinar: base = mais baixa; vira uma forma booleana e a outra some.
+        assert!(run1(&mut o, LayerCmd::Boolean(BoolOp::Subtract)).is_none());
+        assert_eq!(o.doc.layers.len(), 3);
+        assert_eq!(pixel_at(&o.doc, 0, 0), Some([0, 200, 0, 255]));
+        assert_eq!(
+            pixel_at(&o.doc, 2, 1),
+            Some([200, 0, 0, 255]),
+            "interseção subtraída"
+        );
+        // Forma → seleção e máscara vetorial na camada de baixo.
+        o.active_layer = a;
+        assert!(run1(&mut o, LayerCmd::PathToSelection).is_none());
+        assert!(o.doc.selection.mask.is_some());
+        assert!(run1(&mut o, LayerCmd::VectorMask).is_none());
+        let below = o.doc.layers[1].mask.as_ref().unwrap();
+        assert!(below.vector_source().is_some());
+        // Rasterizar uma vez; depois avisa que já é raster.
+        o.active_layer = a;
+        assert!(run1(&mut o, LayerCmd::Rasterize).is_none());
+        assert!(o.doc.layer(a).unwrap().source.is_none());
+        assert!(run1(&mut o, LayerCmd::Rasterize).is_some());
+        assert!(
+            run1(&mut o, LayerCmd::PathToSelection).is_some(),
+            "não é mais forma"
+        );
+        o.history.undo(&mut o.doc);
+        assert!(o.doc.layer(a).unwrap().source.is_some());
+    }
+
+    #[test]
+    fn source_edits_from_the_panel_are_one_undoable_action() {
+        use orvalith_core::vector::{Geom, ShapeSpec};
+        use orvalith_core::LayerSource;
+        let mut o = open_with_two();
+        crate::vectool::VecState::add_layer(
+            &mut o,
+            LayerSource::Shape(ShapeSpec::solid(
+                Geom::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 2.0,
+                    h: 2.0,
+                    radius: 0.0,
+                },
+                [0, 0, 255, 255],
+            )),
+            "Forma",
+        );
+        let idx = o.doc.layers.len() - 1;
+        let before = o.history.labels().len();
+        begin_prop_drag(&mut o, "Editar propriedades");
+        for w in [3.0, 4.0] {
+            let (dw, dh) = (o.doc.width, o.doc.height);
+            if let Some(LayerSource::Shape(s)) = o.doc.layers[idx].source.as_mut() {
+                s.geom = Geom::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w,
+                    h: 2.0,
+                    radius: 0.0,
+                };
+            }
+            o.doc.layers[idx].rerender(dw, dh);
+            o.doc.touch();
+        }
+        end_prop_drag(&mut o);
+        assert_eq!(o.history.labels().len(), before + 1);
+        o.history.undo(&mut o.doc);
+        match &o.doc.layers[idx].source {
+            Some(LayerSource::Shape(ShapeSpec {
+                geom: Geom::Rect { w, .. },
+                ..
+            })) => assert_eq!(*w, 2.0),
+            other => panic!("{other:?}"),
+        }
     }
 }

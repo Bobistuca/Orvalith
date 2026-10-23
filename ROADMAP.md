@@ -17,7 +17,7 @@ Estados: planned · in progress · partial · validated · blocked. Detalhes de 
 | 5 | Seleções | 3, 4 | partial |
 | 6 | Transformações e geometria | 5 | partial |
 | 7 | Máscaras, recorte, canais | 5 | partial |
-| 8 | Texto, formas e caminhos | 6, 7 | planned |
+| 8 | Texto, formas e caminhos | 6, 7 | partial |
 | 9 | Ajustes e gerenciamento de cor | 4 | planned |
 | 10 | Retoque e filtros clássicos | 5, 9 | planned |
 | 11 | Efeitos, recursos editáveis, objetos embutidos | 8, 9 | planned |

@@ -483,6 +483,7 @@ fn recentre(src: &Layer, w: u32, h: u32) -> Layer {
     let mut out = src.clone();
     out.width = w;
     out.height = h;
+    out.source = None; // o conteúdo foi reposicionado: vira raster
     out.pixels = std::sync::Arc::new(dst);
     if let Some(m) = out.mask.as_mut() {
         if m.data().len() == src.width as usize * src.height as usize {

@@ -17,9 +17,11 @@ use serde::{Deserialize, Serialize};
 use crate::blend::BlendMode;
 use crate::document::{Channel, Document, Guide, Layer, LayerId, LayerKind, LayerMask};
 use crate::layerops::normalize;
+use crate::source::{shape_sane, LayerSource};
+use crate::vector::ShapeSpec;
 
 pub const MAGIC: &[u8; 8] = b"ORVALITH";
-pub const CURRENT_VERSION: u32 = 5;
+pub const CURRENT_VERSION: u32 = 6;
 const MAX_CHANNELS: usize = 256;
 const HEADER_LEN: usize = 20;
 const MAX_MANIFEST: usize = 64 * 1024 * 1024;
@@ -123,6 +125,9 @@ struct LayerEntry {
     clipped: bool,
     #[serde(default)]
     mask: Option<MaskEntry>,
+    /// Versão 6: origem editável (texto/forma) como JSON; lida de forma tolerante.
+    #[serde(default)]
+    source: Option<serde_json::Value>,
 }
 
 /// Máscara de camada (versão 5): recurso zlib de 1 byte por pixel do documento.
@@ -136,6 +141,9 @@ struct MaskEntry {
     linked: bool,
     density: f32,
     feather: f32,
+    /// Versão 6: forma de origem de uma máscara vetorial.
+    #[serde(default)]
+    vector: Option<serde_json::Value>,
 }
 
 fn pack(bytes: &[u8], blob: &mut Vec<u8>) -> Result<(u64, u64, u32), OrvaError> {
@@ -202,6 +210,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
             expanded: l.expanded,
             clipped: l.clipped,
             mask: None,
+            source: l.source.as_ref().and_then(|s| serde_json::to_value(s).ok()),
         });
         blob.extend_from_slice(&packed);
         if let Some(m) = &l.mask {
@@ -216,6 +225,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
                     linked: m.linked,
                     density: m.density(),
                     feather: m.feather(),
+                    vector: m.vector_source().and_then(|s| serde_json::to_value(s).ok()),
                 });
             }
         }
@@ -462,6 +472,12 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         layer.lock_position = e.lock_position;
         layer.expanded = e.expanded;
         layer.clipped = e.clipped;
+        // Origem inválida ou hostil é ignorada: a camada fica raster com os pixels gravados.
+        layer.source = e
+            .source
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<LayerSource>(v.clone()).ok())
+            .filter(LayerSource::is_sane);
         if let Some(me) = &e.mask {
             let packed = &blob[me.offset as usize..(me.offset + me.stored_len) as usize];
             let mut data = Vec::with_capacity(me.raw_len as usize);
@@ -477,6 +493,15 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
             m.linked = me.linked;
             m.set_density(me.density);
             m.set_feather(me.feather);
+            if let Some(spec) = me
+                .vector
+                .as_ref()
+                .and_then(|v| serde_json::from_value::<ShapeSpec>(v.clone()).ok())
+                .filter(shape_sane)
+            {
+                let data = m.data().as_ref().clone();
+                m.set_vector(spec, data);
+            }
             layer.mask = Some(m);
         }
         layers.push(layer);
@@ -757,5 +782,47 @@ mod tests {
         out.extend_from_slice(&crc32fast::hash(&json).to_le_bytes());
         out.extend_from_slice(&json);
         assert!(matches!(read(&out), Err(OrvaError::TooLarge(_))));
+    }
+    #[test]
+    fn editable_sources_roundtrip_and_hostile_ones_are_ignored() {
+        use crate::vector::{Geom, ShapeSpec};
+        let mut doc = Document::new("v", 6, 6, Some([1, 2, 3, 255])).unwrap();
+        let spec = ShapeSpec::solid(
+            Geom::Rect {
+                x: 1.0,
+                y: 1.0,
+                w: 3.0,
+                h: 3.0,
+                radius: 0.0,
+            },
+            [9, 9, 9, 255],
+        );
+        let mut l = Layer::from_pixels("forma", 6, 6, crate::vector::render_shape(&spec, 6, 6));
+        l.source = Some(LayerSource::Shape(spec.clone()));
+        doc.layers.push(l);
+        let back = read(&write(&doc).unwrap()).unwrap();
+        assert_eq!(back.layers[1].source, Some(LayerSource::Shape(spec)));
+        assert_eq!(back.layers[1].pixels, doc.layers[1].pixels);
+        // Origem desconhecida/corrompida no manifesto: a camada vira raster, sem erro.
+        let mut hostile = Document::new("v", 6, 6, Some([1, 2, 3, 255])).unwrap();
+        let bytes = write(&hostile).unwrap();
+        let text = String::from_utf8_lossy(&bytes[HEADER_LEN..]).to_string();
+        assert!(text.contains("\"source\":null"));
+        hostile.layers[0].source = None;
+        let man_len = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        let man = &bytes[HEADER_LEN..HEADER_LEN + man_len];
+        let patched = String::from_utf8(man.to_vec()).unwrap().replacen(
+            "\"source\":null",
+            "\"source\":{\"Texto\":{\"x\":1}}",
+            1,
+        );
+        let mut out = bytes[..12].to_vec();
+        out.extend_from_slice(&(patched.len() as u32).to_le_bytes());
+        out.extend_from_slice(&crc32fast::hash(patched.as_bytes()).to_le_bytes());
+        out.extend_from_slice(patched.as_bytes());
+        out.extend_from_slice(&bytes[HEADER_LEN + man_len..]);
+        let loaded = read(&out).unwrap();
+        assert!(loaded.layers[0].source.is_none());
+        assert_eq!(loaded.layers[0].pixels, hostile.layers[0].pixels);
     }
 }

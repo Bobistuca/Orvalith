@@ -53,6 +53,8 @@ pub struct OpenDoc {
     pub qm_target: Option<u64>,
     pub mask_thumbs: HashMap<LayerId, egui::TextureHandle>,
     pub renaming_channel: Option<(u64, String)>,
+    /// Filtro de busca da lista de fontes (painel da camada).
+    pub font_filter: String,
     /// Máscara rápida: um documento cinza (255 = selecionado) editado com as ferramentas de pintura.
     pub qm: Option<Box<OpenDoc>>,
     sel_edges: Option<(usize, Vec<[f32; 4]>)>,
@@ -95,6 +97,7 @@ impl OpenDoc {
             qm_target: None,
             mask_thumbs: HashMap::new(),
             renaming_channel: None,
+            font_filter: String::new(),
             qm: None,
             sel_edges: None,
             guide_drag: None,
@@ -376,6 +379,9 @@ pub struct CanvasOut {
     pub pressure: f32,
     /// Pontos de tela por pixel do documento (para tamanhos de alças).
     pub zoom: f32,
+    /// Visão e origem do canvas na tela (para posicionar editores sobre o documento).
+    pub view: Option<View>,
+    pub origin: egui::Pos2,
 }
 
 const RULER: f32 = 20.0;
@@ -496,6 +502,8 @@ pub fn show(
     let mut out = CanvasOut {
         pressure: 1.0,
         zoom: view.zoom,
+        view: Some(view),
+        origin: rect.min,
         hover: resp.hover_pos().map(to_doc).map(snap),
         ..Default::default()
     };

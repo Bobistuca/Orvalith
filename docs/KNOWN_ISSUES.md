@@ -16,7 +16,8 @@
 - A prévia de transformação reprocessa a camada inteira a cada ajuste (bicúbica em 4K pode levar segundos); o trabalho é paralelizado por linhas mas roda na thread da interface.
 - Malha de deformação: bordas externas sem suavização; os pontos de controle são fixos em 4×4.
 - Réguas desaparecem enquanto a visão está girada; o Mover não encaixa em guias.
-- Máscaras vetoriais não existem (dependem do Estágio 8); a máscara de grupo não acompanha o conteúdo ao mover o grupo.
+- A máscara de grupo não acompanha o conteúdo ao mover o grupo.
+- Estágio 8: texto é editado numa caixa flutuante (sem edição no canvas nem estilos por trecho); formas sem alças no canvas; booleanas por cobertura (sem contorno vetorial exato); pintar/transformar/redimensionar camada de texto/forma exige rasterizar (resize/orientar/endireitar rasterizam); texto em caminho e vertical não existem; ferramentas de texto/caneta não foram exercitadas com mouse/teclado reais.
 - A pena da máscara é um desfoque da tela inteira (cache por camada), pesado em documentos grandes na primeira exibição após alterar.
 - Recorte (clipping): em pixels com alfa parcial na base o resultado é aproximado e pode diferir de outros editores.
 - O painel de camadas ficou longo (propriedades, máscara, lista, canais) e não foi exercitado com mouse.

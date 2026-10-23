@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::blend::BlendMode;
+use crate::source::LayerSource;
+use crate::vector::ShapeSpec;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -54,6 +56,8 @@ pub struct LayerMask {
     density: f32,
     feather: f32,
     cache: Arc<OnceLock<Arc<Vec<u8>>>>,
+    /// Máscara vetorial: forma que originou os dados (editável até pintar na máscara).
+    vector: Option<Arc<ShapeSpec>>,
 }
 
 impl LayerMask {
@@ -65,7 +69,20 @@ impl LayerMask {
             density: 1.0,
             feather: 0.0,
             cache: Arc::new(OnceLock::new()),
+            vector: None,
         }
+    }
+
+    /// Origem vetorial da máscara, se ela ainda não foi pintada como raster.
+    pub fn vector_source(&self) -> Option<&ShapeSpec> {
+        self.vector.as_deref()
+    }
+
+    /// Define a máscara a partir de uma forma (`data` = cobertura já renderizada).
+    pub fn set_vector(&mut self, spec: ShapeSpec, data: Vec<u8>) {
+        self.data = Arc::new(data);
+        self.vector = Some(Arc::new(spec));
+        self.reset_cache();
     }
 
     fn reset_cache(&mut self) {
@@ -79,10 +96,12 @@ impl LayerMask {
 
     pub fn set_data(&mut self, data: Arc<Vec<u8>>) {
         self.data = data;
+        self.vector = None;
         self.reset_cache();
     }
 
     pub fn data_mut(&mut self) -> &mut Vec<u8> {
+        self.vector = None;
         self.reset_cache();
         Arc::make_mut(&mut self.data)
     }
@@ -160,6 +179,8 @@ pub struct Layer {
     pub mask: Option<LayerMask>,
     /// Recortada na camada abaixo (máscara de recorte / clipping).
     pub clipped: bool,
+    /// Origem editável (texto ou forma). `None` = camada raster comum.
+    pub source: Option<LayerSource>,
     pub width: u32,
     pub height: u32,
     pub pixels: Arc<Vec<u8>>,
@@ -199,6 +220,7 @@ impl Layer {
             expanded: true,
             mask: None,
             clipped: false,
+            source: None,
             width,
             height,
             pixels: Arc::new(pixels),
@@ -214,6 +236,15 @@ impl Layer {
             height: 0,
             pixels: Arc::new(Vec::new()),
             ..Self::from_pixels(name, 0, 0, Vec::new())
+        }
+    }
+
+    /// Regera os pixels a partir da origem editável (tamanho do documento `w × h`).
+    pub fn rerender(&mut self, w: u32, h: u32) {
+        if let Some(src) = &self.source {
+            self.pixels = Arc::new(src.render(w, h));
+            self.width = w;
+            self.height = h;
         }
     }
 

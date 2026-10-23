@@ -31,6 +31,9 @@ Cada entrada de `layers[]` ganha: `kind` (`raster`/`group`), `parent` (ID do gru
 ## Versão 5 (Estágio 7)
 Cada camada ganha `clipped` (recortada na camada abaixo) e `mask` opcional: `offset`/`stored_len`/`raw_len`/`crc32` de um recurso zlib de 1 byte por pixel do documento, mais `enabled`, `linked`, `density` (0..1) e `feather` (px). `raw_len` deve ser `largura × altura` do documento; a leitura valida tamanho, limites, CRC e conta a memória no limite de 2 GiB. Máscaras de grupo são aceitas.
 
+## Versão 6 (Estágio 8)
+Cada camada ganha `source` opcional (`{"Text": …}` ou `{"Shape": …}`: especificação editável de texto ou forma/caminho) e cada máscara ganha `vector` opcional (forma que a gerou). Os pixels continuam gravados, então a aparência independe de fontes instaladas. Leitura leniente: `source`/`vector` desconhecidos, inválidos ou fora dos limites (`source.rs`) são ignorados e a camada vira raster, sem erro. Fontes ausentes geram aviso ao abrir.
+
 ## Evolução
 Campos desconhecidos no manifesto são ignorados; mudanças incompatíveis incrementam a versão. Um leitor recusa versões maiores que a sua com mensagem clara. Camadas futuras (grupos, máscaras, texto…) entrarão como novos campos/recursos no manifesto.
 
@@ -38,4 +41,4 @@ Campos desconhecidos no manifesto são ignorados; mudanças incompatíveis incre
 Magic, versão, tamanho do manifesto (≤ 64 MiB) e CRC; dimensões 1..=32768; no máximo 10 000 camadas; `raw_len == w·h·4`; soma dos pixels ≤ 2 GiB (falha **antes** de alocar); recursos dentro do arquivo; IDs únicos; descompressão limitada a `raw_len + 1` bytes; CRC dos pixels. Teste de "bomba de alocação" em `orva.rs`.
 
 ## Limitações
-Camadas raster de 8 bits com o tamanho do documento; sem perfil ICC, máscaras, texto ou metadados de pincel.
+Camadas raster de 8 bits com o tamanho do documento; sem perfil ICC ou metadados de pincel; texto/forma guardam só a origem e os pixels.

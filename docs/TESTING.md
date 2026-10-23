@@ -21,6 +21,9 @@ fmt, clippy, 112 testes e build release OK; smoke test abre/fecha. Manual: duas 
 ## Estágio 3 (2026-10-23)
 fmt, clippy, 70 testes e build release OK; smoke test abre/fecha. Manual: Ctrl+N → B (pincel): arrastar rápido em círculos, conferir ausência de lacunas e que Ctrl+Z desfaz o traço inteiro; [ e ] mudam o tamanho; E apaga; I amostra (Alt = fundo); G balde (Tolerância/Contíguo); Shift+G gradiente (Esc cancela durante o arrasto); X troca cores, D restaura; salvar preset e reiniciar o app; salvar `.orva`, reabrir e comparar a pintura; testar em zoom 25%, 100% e 800%.
 
+## Estágio 8 (2026-10-23)
+fmt, clippy -D warnings, 253 testes (núcleo 175 + app 78) e build release OK; smoke test: abre e fecha. Testes de texto pulam se não houver fontes do sistema. Manual: T → clicar → digitar com acentos → Ctrl+Enter; U → arrastar forma; P → clicar/arrastar para curvas, Enter; A → mover nós; selecionar 2 formas (Ctrl+clique) → Texto e formas → Combinar; salvar `.orva`, reabrir e editar de novo.
+
 ## Estágio 2 (2026-10-23)
 fmt, clippy, 36 testes e build release OK; smoke test: abre e fecha sem criar pasta de recuperação (autosave desligado). Manual: Ctrl+N → painel Camadas: marcar/desmarcar visibilidade e arrastar opacidade → título ganha `*`, Ctrl+Z/Ctrl+Shift+Z; Ctrl+S → escolher `.orva` → fechar e reabrir com Ctrl+O; Ctrl+Shift+E → PNG/JPEG; arrastar um PNG/JPEG para a janela; ativar autosave (Editar → Preferências), editar, encerrar o processo à força e reabrir para ver a recuperação.
 

@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Estágio 8: texto de ponto/parágrafo editável (fontes do sistema, Unicode, fallback, fonte ausente), formas com preenchimento/gradiente/traço, caneta Bézier e seleção de nós, booleanas, caminho → seleção, máscara vetorial e rasterização explícita; `.orva` v6 (`source`, máscara vetorial). Texto em caminho e vertical ficam planejados.
 - Estágio 7: máscaras de camada (criar, pintar, inverter, ativar, aplicar, excluir, vincular, densidade, pena, visão isolada), máscaras de recorte em cadeia, painel de canais (R/G/B e canais alfa salvos, editar pela máscara rápida), refinar borda; `.orva` v5.
 - Estágio 6: transformação livre/inclinar/distorcer/perspectiva/malha com prévia e cancelamento, espelhar/girar camadas, alinhar/distribuir, recorte, endireitar, tamanho da imagem e da tela, girar/espelhar tela, interpolação (vizinho/bilinear/bicúbica), réguas, guias, grade, encaixe e rotação da visão; `.orva` v4 (guias).
 - Estágio 5: seleções (retângulo, elipse, laço, laço poligonal, varinha, faixa de cores), combinação de modos, inverter/expandir/contrair/suavizar/pena, contorno animado, cortar/copiar/apagar/preencher e ferramentas respeitando a seleção, transformar seleção, canais de seleção salvos no `.orva` (v3) e máscara rápida.

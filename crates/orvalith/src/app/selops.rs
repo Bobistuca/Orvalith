@@ -148,6 +148,13 @@ impl OrvalithApp {
 
     /// Tecla Delete: apaga o conteúdo da seleção; sem seleção, exclui a camada.
     pub(super) fn delete_key(&mut self) {
+        if self.tools.tool == Tool::Node {
+            if let Some(open) = self.docs.get_mut(self.active) {
+                if self.tools.vec.delete_selected_node(open) {
+                    return;
+                }
+            }
+        }
         let has_sel = self
             .docs
             .get(self.active)

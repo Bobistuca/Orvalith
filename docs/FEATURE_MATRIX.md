@@ -85,6 +85,14 @@ tags: [orvalith, matriz]
 | Máscaras de recorte (clipping) em cadeia, com modo/opacidade/máscara próprios e base com máscara ou grupo | 7 | partial | `compose.rs`: alfa da base manda, opacidade da base vale para a cadeia, ocultar base oculta a cadeia, grupos | diferenças de referência no alfa parcial (aproximação); ver [[docs/COMPOSITING]] |
 | Painel de canais: visualizar R/G/B (cinza ou combinado), canais alfa salvos (ver, selecionar, renomear, excluir, editar na máscara rápida) | 7 | partial | `canvas.rs`, `select.rs`, `selops.rs` testes | só RGB 8 bits; sem CMYK/Lab/canais de cor por camada |
 | Refinar borda (suavizar, deslocar, pena, contraste) para máscara e seleção | 7 | partial | `maskops.rs` testes | algoritmos clássicos simples; sem detecção de cabelo/raio inteligente (fora do escopo, sem IA) |
-| Máscaras vetoriais | 7 | blocked | — | dependem dos caminhos (Estágio 8) |
+| Máscaras vetoriais | 8 | partial | `vecops.rs` teste (forma → máscara, persiste no `.orva` v6, vira raster ao pintar) | só a partir de uma forma/caminho; edição dos nós da máscara depois de criada não existe |
+| Texto de ponto e de parágrafo editáveis (família, negrito/itálico, tamanho, cor, alinhamento, entrelinha, espaçamento) | 8 | partial | `text.rs` (cosmic-text: modelagem Unicode, fallback, acentos; testes pulam sem fontes do sistema), `vectool.rs` | editor é uma caixa flutuante, não edição no próprio canvas; sem rich text por trecho; uma fonte por camada |
+| Fontes do sistema, busca e fonte ausente (aviso ao reabrir, aparência gravada mantida, substituta ao editar) | 8 | partial | `text.rs`, `vecops::missing_fonts` testes | substituta é a padrão do sistema; sem pré-visualização de fontes |
+| Formas (retângulo, arredondado, elipse, polígono, estrela, linha) com preenchimento sólido/gradiente e traço editáveis | 8 | partial | `vector.rs` (áreas, AA, JSON), `vecops.rs`, `layers_ui.rs` testes | sem alças de redimensionar no canvas (valores no painel); sem traço tracejado |
+| Caneta Bézier e seleção de nós (inserir, mover, alças, excluir, abrir/fechar) | 8 | partial | `vector.rs` testes de caminho, `vectool.rs` testes com eventos sintéticos | mouse real não exercitado |
+| Operações booleanas (união, subtração, interseção, exclusão) entre formas | 8 | partial | `vector.rs` áreas, `layers_ui.rs` teste | resultado por cobertura (aritmética de alfa), não contorno vetorial exato; operandos guardados |
+| Caminho → seleção; rasterização explícita (única forma de pintar/transformar camada de texto/forma) | 8 | partial | `vecops.rs`, `layers_ui.rs` testes | transformar/pintar exige rasterizar antes (aviso) |
+| Texto em caminho; texto vertical | 8 | planned | — | não implementados |
+| `.orva` v6: origem editável (texto/forma) e máscara vetorial persistem; origem corrompida vira raster | 8 | partial | `orva.rs` testes de ida e volta e origem hostil | ver [[docs/ORVA_FORMAT]] |
 | `.orva` v5: máscaras e recorte persistem | 7 | partial | `orva.rs` teste de ida e volta + corrupção | ver [[docs/ORVA_FORMAT]] |
 | Demais estágios (5–16) | 5–16 | planned | — | ver [[ROADMAP]] |

@@ -16,10 +16,15 @@ use orvalith_core::{compose, DocumentId, Layer, LayerId};
 use crate::canvas::{CanvasOut, OpenDoc, Overlay};
 use crate::geometry::{self, GeoState};
 use crate::select::{is_selection_tool, SelectState};
+use crate::vectool::VecState;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tool {
     Move,
+    Text,
+    Shape,
+    Pen,
+    Node,
     Crop,
     Marquee,
     Ellipse,
@@ -35,8 +40,12 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub const ALL: [Tool; 13] = [
+    pub const ALL: [Tool; 17] = [
         Tool::Move,
+        Tool::Text,
+        Tool::Shape,
+        Tool::Pen,
+        Tool::Node,
         Tool::Crop,
         Tool::Marquee,
         Tool::Ellipse,
@@ -54,6 +63,10 @@ impl Tool {
     pub fn label(self) -> &'static str {
         match self {
             Tool::Move => "Mover",
+            Tool::Text => "Texto",
+            Tool::Shape => "Forma",
+            Tool::Pen => "Caneta",
+            Tool::Node => "Seleção de nós",
             Tool::Crop => "Recortar",
             Tool::Marquee => "Seleção retangular",
             Tool::Ellipse => "Seleção elíptica",
@@ -72,6 +85,10 @@ impl Tool {
     pub fn shortcut(self) -> &'static str {
         match self {
             Tool::Move => "V",
+            Tool::Text => "T",
+            Tool::Shape => "U",
+            Tool::Pen => "P",
+            Tool::Node => "A",
             Tool::Crop => "C",
             Tool::Marquee => "M",
             Tool::Ellipse => "Shift+M",
@@ -146,6 +163,7 @@ pub struct ToolState {
     pub notice: Option<String>,
     pub sel: SelectState,
     pub geo: GeoState,
+    pub vec: VecState,
     preset_name: String,
     active: Option<Active>,
 }
@@ -179,6 +197,8 @@ pub fn gray(c: [u8; 4]) -> [u8; 4] {
 pub(crate) fn paint_blocked(l: &Layer) -> Option<String> {
     if l.is_group() {
         Some("Selecione uma camada raster (não um grupo) para pintar.".into())
+    } else if l.source.is_some() {
+        Some("Camada de texto/forma: use Camada → Rasterizar antes de pintar.".into())
     } else if !l.visible {
         Some("A camada ativa está oculta.".into())
     } else if l.lock_pixels {
@@ -226,6 +246,7 @@ impl ToolState {
             notice: None,
             sel: SelectState::default(),
             geo: GeoState::default(),
+            vec: VecState::default(),
             preset_name: String::new(),
             active: None,
         }
@@ -233,12 +254,12 @@ impl ToolState {
 
     /// Há um traço ou gradiente em andamento (troca de ferramenta/aba é adiada).
     pub fn is_busy(&self) -> bool {
-        self.active.is_some() || self.geo.busy()
+        self.active.is_some() || self.geo.busy() || self.vec.busy()
     }
 
     /// Enter tem algo a confirmar (transformação, recorte ou laço poligonal).
     pub fn needs_confirm(&self) -> bool {
-        self.geo.busy() || self.geo.crop.active() || self.sel.active()
+        self.geo.busy() || self.geo.crop.active() || self.sel.active() || self.vec.busy()
     }
 
     pub fn set_tool(&mut self, tool: Tool) {
@@ -266,13 +287,34 @@ impl ToolState {
         self.brush.size = (s + step).clamp(1.0, 2000.0);
     }
 
-    pub fn overlay(&self, hover: Option<[f32; 2]>) -> Overlay {
+    pub fn overlay(&self, hover: Option<[f32; 2]>, open_for_overlay: Option<&OpenDoc>) -> Overlay {
         if let Some(t) = &self.geo.transform {
             return Overlay {
                 shape: Some(t.shape()),
                 points: t.points(),
                 tool_cursor: true,
                 snap_pointer: true,
+                ..Overlay::default()
+            };
+        }
+        let vec_overlay = match self.tool {
+            Tool::Text => open_for_overlay
+                .and_then(|o| self.vec.text_overlay(o))
+                .map(|s| (s, Vec::new())),
+            Tool::Shape => self
+                .vec
+                .shape_preview(self.fg, self.bg, false)
+                .map(|s| (s, Vec::new())),
+            Tool::Pen => self.vec.pen_shape(),
+            Tool::Node => open_for_overlay.and_then(|o| self.vec.node_overlay(o)),
+            _ => None,
+        };
+        if let Some((shape, points)) = vec_overlay {
+            return Overlay {
+                shape: Some(shape),
+                points,
+                tool_cursor: true,
+                snap_pointer: matches!(self.tool, Tool::Shape | Tool::Pen),
                 ..Overlay::default()
             };
         }
@@ -296,6 +338,8 @@ impl ToolState {
 
     /// Cancela um gradiente em andamento restaurando os pixels originais (tecla Esc).
     pub fn cancel(&mut self, open: &mut OpenDoc) {
+        self.vec.cancel_text(open);
+        self.vec.cancel_pen();
         self.geo.cancel(open);
         self.sel.cancel(open);
         match self.active.take() {
@@ -334,7 +378,10 @@ impl ToolState {
 
     /// Confirma a operação em andamento (Enter): fecha o laço poligonal.
     pub fn confirm(&mut self, open: &mut OpenDoc) {
-        if self.geo.busy() {
+        if self.vec.busy() {
+            let (fg, bg) = (self.fg, self.bg);
+            self.vec.commit_all(open, fg, bg);
+        } else if self.geo.busy() {
             self.geo.commit(open);
         } else if self.geo.crop.active() {
             self.notice = geometry::apply_crop(open, &self.geo.crop);
@@ -373,6 +420,10 @@ impl ToolState {
         }
         match self.tool {
             Tool::Crop => self.geo.crop.handle(out),
+            Tool::Text => self.vec.handle_text(open, out, self.fg),
+            Tool::Shape => self.vec.handle_shape(open, out, self.fg, self.bg),
+            Tool::Pen => self.vec.handle_pen(open, out, self.fg, self.bg),
+            Tool::Node => self.vec.handle_node(open, out),
             Tool::Marquee | Tool::Ellipse | Tool::Lasso | Tool::PolyLasso | Tool::Wand => {
                 self.sel.handle(self.tool, open, out)
             }
@@ -435,7 +486,14 @@ impl ToolState {
                         else {
                             continue;
                         };
-                        cur.pixels = Arc::new(layerops::shifted_pixels(orig, d.0, d.1));
+                        if orig.source.is_some() {
+                            cur.source = orig.source.clone();
+                            orvalith_core::vecops::translate_source(
+                                cur, d.0 as f32, d.1 as f32, open_w, open_h,
+                            );
+                        } else {
+                            cur.pixels = Arc::new(layerops::shifted_pixels(orig, d.0, d.1));
+                        }
                         if let (Some(cm), Some(om)) = (cur.mask.as_mut(), orig.mask.as_ref()) {
                             if cm.linked {
                                 let nd = orvalith_core::selection::shift_mask(
@@ -870,12 +928,21 @@ impl ToolState {
     // ---- Interface ----
 
     /// Barra de opções da ferramenta atual. Retorna `true` se presets mudaram.
-    pub fn options_ui(&mut self, ui: &mut egui::Ui, user_presets: &mut Vec<BrushPreset>) -> bool {
+    pub fn options_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        user_presets: &mut Vec<BrushPreset>,
+        open_for_text: Option<&mut OpenDoc>,
+    ) -> bool {
         let mut presets_changed = false;
         ui.horizontal_wrapped(|ui| {
             ui.strong(self.tool.label());
             ui.separator();
             match self.tool {
+                Tool::Text => self.vec.text_options_ui(ui, open_for_text),
+                Tool::Shape => self.vec.shape_options_ui(ui),
+                Tool::Pen => self.vec.pen_options_ui(ui),
+                Tool::Node => VecState::node_options_ui(ui),
                 Tool::Crop => {
                     ui.label("Arraste a área; alças ajustam; Enter recorta (a área pode passar das bordas); Esc cancela. Camadas ficam recortadas à tela.");
                 }

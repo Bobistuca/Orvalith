@@ -22,8 +22,10 @@ use crate::prefs::Prefs;
 use crate::theme;
 use crate::tools::gray;
 use crate::tools::{Tool, ToolState};
+use crate::vectool::VecState;
 use orvalith_core::docops::{AlignKind, Orient};
 use orvalith_core::maskops::MaskInit;
+use orvalith_core::vector::BoolOp;
 
 struct NewDocForm {
     width: u32,
@@ -268,7 +270,13 @@ impl OrvalithApp {
                     self.active = (self.active + 1) % self.docs.len();
                 }
             }
-            Action::Tool(t) => self.tools.set_tool(t),
+            Action::Tool(t) => {
+                if let Some(o) = self.docs.get_mut(self.active) {
+                    let (fg, bg) = (self.tools.fg, self.tools.bg);
+                    self.tools.vec.commit_all(o, fg, bg);
+                }
+                self.tools.set_tool(t);
+            }
             Action::SwapColors => self.tools.swap_colors(),
             Action::DefaultColors => self.tools.default_colors(),
             Action::BrushSize(f) => self.tools.resize_brush(f),
@@ -294,7 +302,11 @@ impl OrvalithApp {
         ctx.input_mut(|i| {
             // Variantes com Shift primeiro: Ctrl+X casaria também com Ctrl+Shift+X.
             let ca = Modifiers::COMMAND.plus(Modifiers::ALT);
-            let table: [Shortcut; 61] = [
+            let table: [Shortcut; 65] = [
+                (Modifiers::NONE, Key::T, || Action::Tool(Tool::Text)),
+                (Modifiers::NONE, Key::U, || Action::Tool(Tool::Shape)),
+                (Modifiers::NONE, Key::P, || Action::Tool(Tool::Pen)),
+                (Modifiers::NONE, Key::A, || Action::Tool(Tool::Node)),
                 (ca, Key::G, || Action::Layer(LayerCmd::ToggleClip)),
                 (cs, Key::Semicolon, || Action::Geo(GeoCmd::ToggleSnap)),
                 (ca, Key::I, || Action::Geo(GeoCmd::ImageSize)),
@@ -608,6 +620,29 @@ impl eframe::App for OrvalithApp {
                         }
                     }
                 });
+                ui.menu_button("Texto e formas", |ui| {
+                    let items: [(&str, LayerCmd); 7] = [
+                        ("Rasterizar camada", LayerCmd::Rasterize),
+                        ("Combinar: união", LayerCmd::Boolean(BoolOp::Union)),
+                        ("Combinar: subtrair", LayerCmd::Boolean(BoolOp::Subtract)),
+                        ("Combinar: interseção", LayerCmd::Boolean(BoolOp::Intersect)),
+                        ("Combinar: exclusão", LayerCmd::Boolean(BoolOp::Exclude)),
+                        ("Forma → seleção", LayerCmd::PathToSelection),
+                        (
+                            "Forma → máscara vetorial da camada abaixo",
+                            LayerCmd::VectorMask,
+                        ),
+                    ];
+                    for (label, cmd) in &items {
+                        if ui.add_enabled(has_doc, egui::Button::new(*label)).clicked() {
+                            actions.push(Action::Layer(*cmd));
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    ui.small("Combinar usa as formas selecionadas (Ctrl+clique):");
+                    ui.small("a mais baixa é a base; a mais alta é o operando.");
+                });
                 ui.menu_button("Imagem", |ui| {
                     let items: [(&str, &str, GeoCmd); 11] = [
                         ("Tamanho da imagem…", "Ctrl+Alt+I", GeoCmd::ImageSize),
@@ -841,7 +876,11 @@ impl eframe::App for OrvalithApp {
                     if cancel {
                         actions.push(Action::CancelTool);
                     }
-                } else if self.tools.options_ui(ui, &mut self.prefs.brush_presets) {
+                } else if self.tools.options_ui(
+                    ui,
+                    &mut self.prefs.brush_presets,
+                    self.docs.get_mut(self.active),
+                ) {
                     self.persist_tools();
                 }
             });
@@ -887,10 +926,13 @@ impl eframe::App for OrvalithApp {
                     Action::View(c) => Some(*c),
                     _ => None,
                 });
-                let mut overlay = self.tools.overlay(self.cursor_doc);
+                let mut overlay = self.tools.overlay(self.cursor_doc, Some(&*open));
                 overlay.view = self.view_opts;
                 let out = canvas::show(ui, open, cmd, space_down, &overlay);
                 self.cursor_doc = out.hover;
+                if self.tools.vec.text_editing().is_some() {
+                    text_editor_ui(&ctx, &mut self.tools.vec, open, &out);
+                }
                 if self.tools.sel.picking() {
                     self.tools.sel.range_pick(open, &out);
                 } else if let Some(qm) = open.qm.as_deref_mut() {
@@ -1255,5 +1297,67 @@ impl OrvalithApp {
             self.prefs.save();
         }
         self.prefs_open = open;
+    }
+}
+
+/// Editor de texto flutuante sobre o canvas (prévia ao vivo no documento).
+fn text_editor_ui(
+    ctx: &egui::Context,
+    vec: &mut VecState,
+    open: &mut OpenDoc,
+    out: &canvas::CanvasOut,
+) {
+    let Some(view) = out.view else { return };
+    let Some(current) = vec.current_text(open) else {
+        return;
+    };
+    let Some(id) = vec.text_editing() else { return };
+    let Some(orvalith_core::LayerSource::Text(spec)) =
+        open.doc.layer(id).and_then(|l| l.source.clone())
+    else {
+        return;
+    };
+    let p = view.doc_to_view([spec.x, spec.y]);
+    let pos = out.origin + egui::vec2(p[0], p[1]) - egui::vec2(0.0, 6.0);
+    let mut text = current.clone();
+    let (mut ok, mut cancel) = (false, false);
+    egui::Area::new(egui::Id::unique("orvalith_text_editor"))
+        .fixed_pos(pos)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                let r = ui.add(
+                    egui::TextEdit::multiline(&mut text)
+                        .desired_rows(3)
+                        .desired_width(280.0)
+                        .hint_text("Digite o texto…"),
+                );
+                if vec.text_focus_pending {
+                    r.request_focus();
+                    vec.text_focus_pending = false;
+                }
+                if r.has_focus() {
+                    let (esc, ctrl_enter) = ui.input(|i| {
+                        (
+                            i.key_pressed(egui::Key::Escape),
+                            i.modifiers.command && i.key_pressed(egui::Key::Enter),
+                        )
+                    });
+                    cancel |= esc;
+                    ok |= ctrl_enter;
+                }
+                ui.horizontal(|ui| {
+                    ok |= ui.button("OK (Ctrl+Enter)").clicked();
+                    cancel |= ui.button("Cancelar (Esc)").clicked();
+                });
+            });
+        });
+    if text != current {
+        vec.edit_text_spec(open, |t| t.text = text);
+    }
+    if cancel {
+        vec.cancel_text(open);
+    } else if ok {
+        vec.commit_text(open);
     }
 }

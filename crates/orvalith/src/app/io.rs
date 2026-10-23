@@ -121,6 +121,7 @@ impl OrvalithApp {
         }
         match load_file(&path) {
             Ok(l) => {
+                let missing = orvalith_core::vecops::missing_fonts(&l.doc);
                 let mut open = OpenDoc::new(l.doc);
                 if l.project {
                     open.path = Some(path.clone());
@@ -131,6 +132,15 @@ impl OrvalithApp {
                 self.prefs.save();
                 if !l.warnings.is_empty() {
                     self.show_message("Aviso de importação", l.warnings.join("\n"));
+                }
+                if !missing.is_empty() {
+                    self.show_message(
+                        "Fontes ausentes",
+                        format!(
+                            "Fontes não instaladas: {}.\nAs camadas de texto mantêm a aparência gravada e continuam editáveis; ao editar, será usada uma fonte substituta até você escolher outra.",
+                            missing.join(", ")
+                        ),
+                    );
                 }
             }
             Err(e) => self.show_message(

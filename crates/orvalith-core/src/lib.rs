@@ -19,7 +19,11 @@ pub mod orva;
 pub mod paint;
 pub mod selection;
 pub mod snap;
+pub mod source;
+pub mod text;
 pub mod transform;
+pub mod vecops;
+pub mod vector;
 pub mod view;
 
 pub use blend::BlendMode;
@@ -28,3 +32,4 @@ pub use document::{
 };
 pub use geom::Rect;
 pub use history::{Command, History};
+pub use source::LayerSource;

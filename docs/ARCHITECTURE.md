@@ -36,5 +36,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Máscaras e canais (Estágio 7)
 `Layer.mask: Option<LayerMask>` ([document.rs](../crates/orvalith-core/src/document.rs)) com cache da máscara efetiva; [maskops.rs](../crates/orvalith-core/src/maskops.rs) (criar/aplicar/inverter/refinar, funções puras) e `edit::MaskPatch` (pintura na máscara com desfazer). A pintura na máscara reaproveita o motor de traço: uma camada-sombra cinza recebe as ferramentas e cada etapa é copiada de volta para a máscara real (prévia ao vivo); o fim do gesto vira um `MaskPatch`. A composição (`compose.rs`) trata cadeias de recorte e máscaras. O painel de canais usa a máscara rápida (`qm_target`) para editar canais salvos.
 
+## Texto, formas e caminhos (Estágio 8)
+[vector.rs](../crates/orvalith-core/src/vector.rs) (formas, caminhos Bézier, cobertura e renderização com `tiny-skia`, booleanas), [text.rs](../crates/orvalith-core/src/text.rs) (`cosmic-text`: fontes do sistema, modelagem, fallback), [source.rs](../crates/orvalith-core/src/source.rs) (`LayerSource` + limites) e [vecops.rs](../crates/orvalith-core/src/vecops.rs) (criar/atualizar/rasterizar/combinar, máscara vetorial). A camada continua do tamanho da tela com pixels renderizados; `Layer.source` guarda a especificação editável e `rerender` regera os pixels. Operações que não preservam a origem pedem rasterização. UI: [vectool.rs](../crates/orvalith/src/vectool.rs).
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

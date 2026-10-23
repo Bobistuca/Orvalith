@@ -8,6 +8,7 @@ mod prefs;
 mod select;
 mod theme;
 mod tools;
+mod vectool;
 
 fn main() -> eframe::Result<()> {
     let prefs = prefs::Prefs::load();
