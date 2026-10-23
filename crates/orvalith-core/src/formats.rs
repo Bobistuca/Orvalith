@@ -34,6 +34,7 @@ pub enum Format {
     Psd,
     Psb,
     Pdf,
+    Pcraft,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,8 +80,9 @@ pub const FORMATS: &[FormatInfo] = &[
     FormatInfo { format: Format::Exr, name: "OpenEXR", exts: &["exr"], read: Level::Partial, write: Level::Partial, note: "idem HDR; uma camada de imagem; sem canais extras" },
     FormatInfo { format: Format::Svg, name: "SVG", exts: &["svg"], read: Level::Partial, write: Level::No, note: "importa rasterizando (vira camada raster, com aviso); sem exportação vetorial" },
     FormatInfo { format: Format::Ora, name: "OpenRaster", exts: &["ora"], read: Level::Partial, write: Level::Partial, note: "camadas, grupos, visibilidade, opacidade, modos básicos; sem máscaras, estilos ou ajustes" },
-    FormatInfo { format: Format::Psd, name: "Photoshop PSD", exts: &["psd"], read: Level::No, write: Level::No, note: "subetapa 12.3" },
-    FormatInfo { format: Format::Psb, name: "Photoshop PSB", exts: &["psb"], read: Level::No, write: Level::No, note: "subetapa 12.3" },
+    FormatInfo { format: Format::Psd, name: "Photoshop PSD", exts: &["psd"], read: Level::Partial, write: Level::Partial, note: "camadas raster, grupos, visibilidade, opacidade, 25 modos, máscaras, recorte, perfil ICC; 8/16 bits RGB e cinza; texto, formas, ajustes, estilos e objetos NÃO são editáveis (viram pixels ou são omitidos, com aviso)" },
+    FormatInfo { format: Format::Psb, name: "Photoshop PSB", exts: &["psb"], read: Level::Partial, write: Level::Partial, note: "mesmo subconjunto do PSD, com os campos de 64 bits do formato grande" },
+    FormatInfo { format: Format::Pcraft, name: "PhotoCraft", exts: &["pcraft"], read: Level::Partial, write: Level::No, note: "somente leitura (manifesto versão 1): camadas raster, grupos, máscaras, opacidade e modos; texto/forma/objeto só como pixels; escrita não implementada (esquema público incompleto)" },
     FormatInfo { format: Format::Pdf, name: "PDF", exts: &["pdf"], read: Level::Partial, write: Level::Partial, note: "importa páginas rasterizadas (Arquivo → Importar PDF) e exporta PDF raster multipágina (Arquivo → Exportar PDF); texto e vetores não ficam editáveis" },
 ];
 
@@ -289,11 +291,12 @@ pub fn import(bytes: &[u8], name: &str, ext: &str) -> Result<Imported, String> {
     match f {
         Format::Svg => import_svg(bytes, name),
         Format::Ora => import_ora(bytes, name),
+        Format::Pcraft => crate::pcraft::read(bytes, name),
         Format::Pdf => {
             Err("PDF: use Arquivo → Importar PDF… (escolha de páginas e resolução).".into())
         }
         Format::Orva => Err("Projeto Orvalith: abra com Arquivo → Abrir.".into()),
-        Format::Psd | Format::Psb => Err("PSD/PSB ainda não suportado nesta versão.".into()),
+        Format::Psd | Format::Psb => crate::psd::read(bytes, name),
         raster => {
             let fmt = raster.image_format().ok_or("Formato sem codec.")?;
             imageio::import_as(bytes, name, Some(fmt))
@@ -839,18 +842,23 @@ pub fn export_warnings(doc: &Document, fmt: Format, opts: &ExportOpts) -> Vec<St
     if fmt == Format::Webp {
         w.push("WebP é gravado sem perdas (sem qualidade ajustável nesta versão).".into());
     }
+    if matches!(fmt, Format::Psd | Format::Psb) {
+        w.push("Photoshop: camadas raster, grupos, máscaras, opacidade e modos são gravados; texto, formas, estilos, ajustes e objetos inteligentes viram pixels (ou são omitidos). Salve também como .orva para manter a edição.".into());
+    }
     if fmt == Format::Ora {
         w.push("OpenRaster: ajustes, estilos, recortes e objetos inteligentes não existem no formato; máscaras e preenchimento são embutidos no alfa.".into());
     }
     if let Some(p) = &doc.icc {
         match (fmt, opts.color) {
-            (Format::Png | Format::Jpeg, ColorOut::Embed) => {}
+            (Format::Png | Format::Jpeg | Format::Psd | Format::Psb, ColorOut::Embed) => {}
             (_, ColorOut::ToSrgb) => w.push(format!("Os pixels serão convertidos de \"{}\" para sRGB.", p.name)),
-            (Format::Png | Format::Jpeg, ColorOut::Strip) => w.push(format!("O perfil \"{}\" não será gravado.", p.name)),
+            (Format::Png | Format::Jpeg | Format::Psd | Format::Psb, ColorOut::Strip) => w.push(format!("O perfil \"{}\" não será gravado.", p.name)),
             _ => w.push(format!("Este formato não embute o perfil \"{}\": os pixels são gravados como estão e o leitor presumirá sRGB. Use \"Converter para sRGB\" se a cor importa.", p.name)),
         }
     }
-    if !matches!(fmt, Format::Ora) && doc.layers.iter().filter(|l| !l.is_group()).count() > 1 {
+    if !matches!(fmt, Format::Ora | Format::Psd | Format::Psb)
+        && doc.layers.iter().filter(|l| !l.is_group()).count() > 1
+    {
         w.push("O formato não guarda camadas: a imagem composta será exportada. Use .orva (ou OpenRaster) para preservar as camadas.".into());
     }
     w
@@ -900,7 +908,12 @@ pub fn export(doc: &Document, fmt: Format, opts: &ExportOpts) -> Result<Exported
         Format::Png => imageio::export_png_with(doc, opts.color)?,
         Format::Jpeg => imageio::export_jpeg_with(doc, opts.quality, opts.background, opts.color)?,
         Format::Ora => export_ora(doc, &mut warnings)?,
-        Format::Orva | Format::Svg | Format::Psd | Format::Psb | Format::Pdf => {
+        Format::Psd | Format::Psb => {
+            let (b, w) = crate::psd::write(doc, fmt == Format::Psb)?;
+            warnings.extend(w);
+            b
+        }
+        Format::Orva | Format::Svg | Format::Pdf | Format::Pcraft => {
             return Err(format!(
                 "Exportação em {} não está disponível aqui.",
                 info(fmt).name
@@ -1384,5 +1397,27 @@ mod tests {
         assert!(import(&mk("<image w=\"4\" h=\"4\"><stack><layer name=\"x\" src=\"data/falta.png\"/></stack></image>"), "x", "ora").is_err(), "sem camadas legíveis");
         let deep = format!("<image w=\"4\" h=\"4\">{}</image>", "<stack>".repeat(100));
         assert!(import(&mk(&deep), "x", "ora").is_err());
+    }
+    #[test]
+    fn psd_and_psb_go_through_the_common_pipeline() {
+        let mut d = Document::new("p", 12, 8, Some([200, 200, 200, 255])).unwrap();
+        d.layers
+            .push(Layer::filled("L2", 12, 8, [10, 100, 220, 255]));
+        d.icc = crate::color::builtin_profiles().into_iter().nth(1);
+        for f in [Format::Psd, Format::Psb] {
+            assert!(Format::exportable().contains(&f) && f.can_read());
+            let out = export(&d, f, &ExportOpts::default()).unwrap();
+            assert_eq!(detect(&out.bytes, f.default_ext()), Some(f));
+            let back = import(&out.bytes, "p", f.default_ext()).unwrap().document;
+            assert_eq!(back.layers.len(), 2);
+            assert_eq!(
+                back.icc.as_ref().map(|p| p.data.clone()),
+                d.icc.as_ref().map(|p| p.data.clone()),
+                "bytes do perfil preservados"
+            );
+            assert!(export_warnings(&d, f, &ExportOpts::default())
+                .iter()
+                .all(|w| !w.contains("não embute")));
+        }
     }
 }

@@ -45,5 +45,40 @@ O termo informal "MG" não identifica formato conhecido; nenhum decodificador `.
 
 Importação: miniaturas, escolha de páginas, resolução (ppi), fundo (transparente/branco/cor), recorte em mm, tamanho físico informado. Exportação: vários documentos em um PDF multipágina; tamanho (da imagem, A3, A4, A5, Carta, Ofício, personalizado), orientação, margens, resolução efetiva exibida. Subconjunto "Photoshop PDF": **não suportado** (nenhum dado editável extra é preservado). Tudo local: nenhuma conta, sincronização ou conversão online.
 
-## Subetapas seguintes
-12.3 PSD/PSB e 12.4 `.pcraft`: ver as seções abaixo, atualizadas a cada subetapa.
+## Estágio 12.3 — Photoshop PSD e PSB
+
+Implementação própria (`psd.rs`) a partir da especificação pública da Adobe, com cabeçalho/recursos/camadas/máscaras/imagem composta; o PSB usa os campos de 64 bits.
+
+| Nível | Leitura | Escrita | Observações |
+|---|---|---|---|
+| 1. Imagem composta e metadados básicos | sim (raw, RLE, ZIP, ZIP com predição; 8 e 16 bits; RGB e tons de cinza) | sim (RGB 8 bits, alfa pelo primeiro canal alfa do composto, RLE) | resolução e perfil ICC (recurso 0x040F) preservados; 16 bits são reduzidos a 8 com aviso |
+| 2. Camadas raster, grupos, nome, visibilidade, opacidade, modos | sim | sim | nome Unicode (`luni`), preenchimento (`iOpa`), recorte, grupos (`lsct` aberto/fechado), 25 modos + passar através |
+| 3. Máscaras, canais, perfis, profundidades | parcial: máscara de camada, perfil, 8/16 bits | parcial: máscara de camada (densidade/pena embutidas), perfil; só 8 bits | sem canais alfa extras/spot, sem máscaras vetoriais, sem CMYK/Lab/Indexado/Bitmap/Duotone (recusados com a mensagem do modo) |
+| 4. Texto, formas, ajustes, estilos, objetos inteligentes | **não** | **não** | leitura: viram pixels (texto/forma/objeto/preenchimento) ou são omitidos (ajustes, sem pixels) e **listados no aviso**; escrita: viram pixels, estilos/ajustes omitidos, também avisados. Dados desconhecidos **não** são preservados; o aviso sugere salvar como `.orva`. Um PSD gravado por aqui não preserva a edição de texto no Photoshop |
+
+Verificado por: ida e volta PSD e PSB (camadas, grupos, máscaras, recorte, opacidade, modo, visibilidade, nome com acento, composição equivalente); **leitor independente** (crate `psd`) abre o arquivo gravado e a composição é idêntica; leitor lê arquivos montados à mão com raw/RLE/ZIP, 16 bits e cinza; truncar/corromper bytes não causa pânico; dimensões incompatíveis com o tamanho do arquivo são recusadas antes de alocar. **Validação com o Photoshop real: pendente** (não há Photoshop no ambiente de teste); arquivos reais do Photoshop com recursos próprios podem diferir. Sem login, Creative Cloud ou PSDC: apenas arquivos locais.
+
+## Estágio 12.4 — PhotoCraft `.pcraft`
+
+Pesquisa (documentação pública do repositório `storytold/photocraft`, licença MIT/Apache-2.0): o `.pcraft` é um **zip em modo "store"** (ou diretório) com `manifest.json` versionado (`format_version`, hoje `1`), blocos `tiles/<blake3>.zst` (ladrilhos de 256×256, amostras intercaladas little-endian, zstd) e `blobs/<blake3>.zst`; o esquema do manifesto vem do código público (`crates/format/src/manifest.rs`), não de uma especificação formal, e o projeto está em alfa (os campos mudam).
+
+| | Leitura | Escrita |
+|---|---|---|
+| Estado | **parcial** (`pcraft.rs`, adaptador separado do `.orva`) | **não implementada** |
+| Subconjunto | manifesto versão 1; camadas raster e grupos RGB/cinza de 8 e 16 bits; visibilidade, opacidade, preenchimento, modo (26 de 34 modos; os demais viram Normal com aviso), recorte, máscara, perfil ICC; texto/forma/objeto inteligente/preenchimento só como pixels (cache renderizado) com aviso; ajustes e efeitos omitidos com aviso | motivo: o `DocM` exige dezenas de campos sem esquema público estável (caminhos, composições, vídeo, notas…) e não há como validar o resultado no PhotoCraft; gerar um "quase .pcraft" violaria a regra de não fingir compatibilidade. Nunca se grava um `.orva` com extensão `.pcraft` |
+| Verificado por | arquivos **sintéticos** montados segundo a especificação (zip + manifesto + ladrilhos zstd com hash BLAKE3): camadas, grupos, máscara, modos, cache de texto, 16 bits, hash adulterado, versão/modo/dimensão inválidos, aninhamento absurdo, zip truncado | — |
+| Pendente | abrir arquivos reais gerados pelo PhotoCraft (validação cruzada); versões > 1; diretório "bundle"; ladrilhos F32/CMYK | escrita após haver esquema estável e validação |
+
+Não requer instalação do ArtCraft/PhotoCraft nem login.
+
+## Estágio 12.5 — Evidências de interoperabilidade
+
+| Formato | Evidência independente | Pendente |
+|---|---|---|
+| PDF | `lopdf` (parser) confere páginas, MediaBox e imagens do PDF gravado; `hayro` (renderizador independente) o rasteriza; PDF criptografado por `lopdf` (RC4 128) é aberto com a senha | leitor externo (Acrobat/Chrome); AES; PDFs reais complexos |
+| PSD | crate `psd` (leitor independente) lê o PSD gravado e a composição coincide | Photoshop real; PSB em outro leitor |
+| OpenRaster | estrutura do contêiner conferida (mimetype primeiro e sem compressão, stack.xml, mergedimage, miniatura) | GIMP/Krita |
+| Raster comuns | codecs do crate `image` (ida e volta exata onde sem perdas) | visualizadores externos |
+| `.pcraft` | arquivos sintéticos conforme a documentação pública | PhotoCraft real |
+
+Tudo roda sem rede e sem login. Falhas reprodutíveis estão nos testes (`formats.rs`, `pdf.rs`, `psd.rs`, `pcraft.rs`). Impressão com dimensões físicas e visualização de impressão **não foram implementadas** (a exportação PDF cobre tamanho de página, orientação, margens e resolução efetiva).

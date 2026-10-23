@@ -63,5 +63,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## PDF (Estágio 12.2)
 [pdf.rs](../crates/orvalith-core/src/pdf.rs): leitura/rasterização com `hayro` (senha local), escrita raster com `pdf-writer` (`PdfSetup`, `layout`). UI: [app/pdfs.rs](../crates/orvalith/src/app/pdfs.rs).
 
+## PSD/PSB e .pcraft (Estágio 12.3–12.4)
+[psd.rs](../crates/orvalith-core/src/psd.rs) (leitor/escritor próprios de PSD/PSB) e [pcraft.rs](../crates/orvalith-core/src/pcraft.rs) (adaptador somente-leitura do `.pcraft`, separado do `.orva`), ambos ligados por `formats.rs`.
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

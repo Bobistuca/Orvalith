@@ -2,7 +2,7 @@
 
 Editor de imagens desktop escrito em Rust, **sem login, sem rede, armazenamento exclusivamente local**. Interface em português do Brasil. Plataforma principal: Windows 11 x64.
 
-## Estado atual (Estágio 10)
+## Estado atual (Estágio 12)
 - Janela nativa (eframe/egui) com tema próprio, estado vazio e diálogo "Novo documento".
 - Núcleo (`orvalith-core`): documento, camada raster RGBA8, compositor CPU (Normal + opacidade) e histórico desfazer/refazer, com testes.
 - Abre PNG/JPEG e projetos `.orva`, salva `.orva` (atômico), exporta PNG/JPEG, painel de camadas (visibilidade/opacidade) com desfazer/refazer, zoom/pan, abas.
@@ -15,6 +15,7 @@ Editor de imagens desktop escrito em Rust, **sem login, sem rede, armazenamento 
 - Menu Ajustes: 16 ajustes (níveis, curvas, matiz/saturação…) destrutivos com prévia ou como camadas de ajuste editáveis, histograma e perfil de cor (ICC).
 - Filtro: 14 filtros clássicos com prévia em segundo plano; retoque: carimbo (S), correção pontual (J), remendo (H), olhos vermelhos (Y) e pincéis de efeito (R).
 - Liquify (Shift+R): deformar, suavizar e reconstruir.
+- Formatos (veja [docs/FORMAT_SUPPORT.md](docs/FORMAT_SUPPORT.md)): PNG, JPEG, WebP, GIF, BMP, TIFF, TGA, ICO, QOI, PNM, HDR, EXR, SVG (rasterizado), OpenRaster, PDF (importar páginas/exportar raster), PSD/PSB e leitura de .pcraft; exportação em lote.
 - Ainda **não** tem estilos de camada, 16 bits, PDF, PSD etc. Veja [ROADMAP.md](ROADMAP.md) e [docs/FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md).
 
 ## Requisitos

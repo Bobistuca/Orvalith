@@ -17,6 +17,7 @@
 - Malha de deformação: bordas externas sem suavização; os pontos de controle são fixos em 4×4.
 - Réguas desaparecem enquanto a visão está girada; o Mover não encaixa em guias.
 - A máscara de grupo não acompanha o conteúdo ao mover o grupo.
+- Estágio 12.3–12.5: PSD/PSB não preservam texto/estilos/ajustes/objetos editáveis nem dados desconhecidos; a escrita é só 8 bits RGB; cada camada importada de PSD tem o tamanho do documento (memória alta em documentos grandes com muitas camadas); `.pcraft` é só leitura e só a versão 1 do manifesto; nenhuma validação cruzada com Photoshop/PhotoCraft reais; sem impressão.
 - Estágio 12.2: PDF importado vira imagem (texto não editável); o renderizador não cobre 100% dos PDFs; exportação só raster; AES não testado com arquivos reais; a importação renderiza na thread da interface; o perfil de dev compila dependências com opt-level 2 (build inicial mais lento).
 - Estágio 12.1: WebP só grava sem perdas; GIF/ICO/TIFF/BMP limitados ao subconjunto do codec; HDR/EXR e 16 bits viram 8 bits; SVG/PDF não ficam vetoriais; OpenRaster não leva máscaras/estilos; AVIF/HEIC/JXL/JP2/RAW não suportados; sem impressão; a janela de exportação e o lote não foram exercitados com mouse.
 - Estágio 11.3: composições não guardam posição de camadas nem conteúdo; camadas criadas depois ficam como estão ao aplicar uma composição antiga.
