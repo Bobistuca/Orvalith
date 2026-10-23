@@ -6,6 +6,9 @@ Comandos em [[CLAUDE]] e [[docs/COMMIT_CHECKLIST]].
 - Manual (UI): `cargo run -p orvalith` → "Novo documento" → criar 1920×1080 → ver xadrez/fundo branco; Ctrl+N abre o diálogo.
 - Última execução registrada: ver [[docs/CONTINUITY]].
 
+## Estágio 6 (2026-10-23)
+fmt, clippy, 192 testes e build release OK; smoke test abre/fecha. Manual: Ctrl+T → arrastar dentro (mover), canto (escalar; Shift mantém proporção), fora (girar; Shift = passos de 15°), pivô e valores numéricos na barra, Enter aplica/Esc cancela (1 ação); Imagem → Transformar camada (inclinar, distorcer, perspectiva, malha 4×4, espelhar, girar); C recorta (alças; Enter); Imagem → Tamanho da imagem/da tela/Endireitar/Girar tela; Camada→Alinhar; arrastar das réguas cria guias (arrastar de volta remove); Ctrl+R/Ctrl+'/Ctrl+;/Ctrl+Shift+; alternam réguas/grade/guias/encaixe; Alt+←/→ gira a visão, Alt+↑ redefine; salvar `.orva` e reabrir conferindo dimensões e guias.
+
 ## Estágio 5 (2026-10-23)
 fmt, clippy, 149 testes e build release OK; smoke test abre/fecha. Manual: M arrasta um retângulo (formigas animadas); Shift+arrastar adiciona, Alt subtrai; arrastar de dentro move a seleção; L laço livre; Shift+L polígono (duplo clique/Enter fecha, Esc cancela); W varinha; Selecionar → Faixa de cores (prévia ao vivo) / Modificar / Transformar / Canais; com seleção: pincel, balde e gradiente não saem dela, Delete apaga, Alt+Backspace preenche com a cor de frente, Ctrl+X/C e Ctrl+V entre documentos; Q entra na máscara rápida (pinte, Q sai); Ctrl+Z desfaz seleção e edições; salvar o `.orva` com um canal e reabrir.
 

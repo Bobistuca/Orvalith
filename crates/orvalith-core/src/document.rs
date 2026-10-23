@@ -148,6 +148,13 @@ impl Layer {
     }
 }
 
+/// Guia de alinhamento (linha vertical em x = `pos` ou horizontal em y = `pos`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Guide {
+    pub vertical: bool,
+    pub pos: f32,
+}
+
 /// Seleção atual: máscara 8 bits do tamanho do documento, ou nenhuma.
 #[derive(Debug, Clone, Default)]
 pub struct Selection {
@@ -189,6 +196,8 @@ pub struct Document {
     pub selection: Selection,
     /// Canais alfa auxiliares (seleções salvas).
     pub channels: Vec<Channel>,
+    /// Guias de régua (salvas no projeto).
+    pub guides: Vec<Guide>,
     /// Há alterações não salvas.
     pub modified: bool,
     /// Incrementa a cada edição; descarta resultados assíncronos obsoletos.
@@ -225,6 +234,7 @@ impl Document {
             layers: vec![layer],
             selection: Selection::default(),
             channels: Vec::new(),
+            guides: Vec::new(),
             modified: false,
             revision: 0,
         })
@@ -244,6 +254,7 @@ impl Document {
             layers,
             selection: Selection::default(),
             channels: Vec::new(),
+            guides: Vec::new(),
             modified: false,
             revision: 0,
         }

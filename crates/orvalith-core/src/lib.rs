@@ -5,6 +5,7 @@
 
 pub mod blend;
 pub mod compose;
+pub mod docops;
 pub mod document;
 pub mod edit;
 pub mod fill;
@@ -16,9 +17,11 @@ pub mod layerops;
 pub mod orva;
 pub mod paint;
 pub mod selection;
+pub mod snap;
+pub mod transform;
 pub mod view;
 
 pub use blend::BlendMode;
-pub use document::{Channel, Document, DocumentId, Layer, LayerId, LayerKind, Selection};
+pub use document::{Channel, Document, DocumentId, Guide, Layer, LayerId, LayerKind, Selection};
 pub use geom::Rect;
 pub use history::{Command, History};

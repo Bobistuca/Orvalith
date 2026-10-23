@@ -15,11 +15,11 @@ use flate2::Compression;
 use serde::{Deserialize, Serialize};
 
 use crate::blend::BlendMode;
-use crate::document::{Channel, Document, Layer, LayerId, LayerKind};
+use crate::document::{Channel, Document, Guide, Layer, LayerId, LayerKind};
 use crate::layerops::normalize;
 
 pub const MAGIC: &[u8; 8] = b"ORVALITH";
-pub const CURRENT_VERSION: u32 = 3;
+pub const CURRENT_VERSION: u32 = 4;
 const MAX_CHANNELS: usize = 256;
 const HEADER_LEN: usize = 20;
 const MAX_MANIFEST: usize = 64 * 1024 * 1024;
@@ -64,6 +64,15 @@ struct Manifest {
     /// Versão 3: canais alfa auxiliares (seleções salvas).
     #[serde(default)]
     channels: Vec<ChannelEntry>,
+    /// Versão 4: guias de régua.
+    #[serde(default)]
+    guides: Vec<GuideEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuideEntry {
+    vertical: bool,
+    pos: f32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -191,6 +200,14 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
         ppi: doc.ppi,
         layers: entries,
         channels: channel_entries,
+        guides: doc
+            .guides
+            .iter()
+            .map(|g| GuideEntry {
+                vertical: g.vertical,
+                pos: g.pos,
+            })
+            .collect(),
     };
     let json = serde_json::to_vec(&manifest).map_err(|e| OrvaError::Corrupt(e.to_string()))?;
     let mut out = Vec::with_capacity(HEADER_LEN + json.len() + blob.len());
@@ -374,6 +391,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         layers.push(layer);
     }
     let layers = normalize(layers);
+    let manifest_guides = manifest.guides;
     let mut channels = Vec::with_capacity(manifest.channels.len());
     for c in &manifest.channels {
         let packed = &blob[c.offset as usize..(c.offset + c.stored_len) as usize];
@@ -399,6 +417,15 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         layers,
     );
     doc.channels = channels;
+    doc.guides = manifest_guides
+        .iter()
+        .filter(|g| g.pos.is_finite())
+        .take(10_000)
+        .map(|g| Guide {
+            vertical: g.vertical,
+            pos: g.pos,
+        })
+        .collect();
     Ok(doc)
 }
 
@@ -517,6 +544,25 @@ mod tests {
         let last = bad.len() - 1;
         bad[last] ^= 0xFF;
         assert!(read(&bad).is_err());
+    }
+
+    #[test]
+    fn guides_roundtrip_and_bad_values_are_dropped() {
+        let mut doc = Document::new("g", 5, 4, Some([1, 2, 3, 255])).unwrap();
+        doc.guides = vec![
+            Guide {
+                vertical: true,
+                pos: 2.5,
+            },
+            Guide {
+                vertical: false,
+                pos: 1.0,
+            },
+        ];
+        let back = read(&write(&doc).unwrap()).unwrap();
+        assert_eq!(back.guides, doc.guides);
+        let none = read(&write(&Document::new("g", 5, 4, None).unwrap()).unwrap()).unwrap();
+        assert!(none.guides.is_empty());
     }
 
     #[test]

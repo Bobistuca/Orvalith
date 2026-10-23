@@ -2,6 +2,7 @@
 
 mod app;
 mod canvas;
+mod geometry;
 mod layers_ui;
 mod prefs;
 mod select;

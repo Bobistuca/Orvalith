@@ -65,4 +65,17 @@ tags: [orvalith, matriz]
 | Salvar/carregar seleções como canais (persistem no `.orva` v3) | 5 | partial | `orva.rs` teste; `select.rs` | sem painel de canais completo (Estágio 7) |
 | Desfazer/refazer de seleções e das edições com seleção | 5 | partial | `select.rs`, `selops.rs` testes | seleção não marca o documento como modificado |
 | Máscara rápida (Q): pinte de preto/branco, sobreposição vermelha | 5 | partial | `selops.rs` teste de ida e volta | só pincel/lápis/balde/gradiente; sem opções de cor/opacidade da sobreposição |
+| Transformação livre (Ctrl+T): mover, escalar, girar com valores numéricos, proporção travada, pivô (9 pontos), confirmar/cancelar | 6 | partial | `transform.rs` (identidade exata, deslocamento inteiro, espelho/90° exatos, sem halos de cor, área na rotação) + `geometry.rs` (1 ação, Esc restaura, seleção transformada junto) | alças com mouse não exercitadas; camadas ficam recortadas à tela (o que sai é perdido) |
+| Inclinar, distorcer, perspectiva (homografia) | 6 | partial | `transform.rs` e `geometry.rs` testes | inclinar só numérico; sem alças de borda |
+| Deformação por malha 4×4 (escopo documentado) | 6 | partial | `warp_mesh` identidade/deslocamento | triângulos com mapa afim por célula; borda externa sem suavização; sem malha configurável |
+| Espelhar e girar 90°/180° camada(s) (exato, 1 ação) | 6 | partial | `geometry.rs` testes | — |
+| Alinhar (6 modos) e distribuir camadas | 6 | partial | `docops.rs`, `geometry.rs` testes | usa limites do conteúdo opaco; meio pixel em larguras ímpares; ver Camada/Imagem |
+| Recortar (ferramenta C, alças, além das bordas) e recortar para a seleção | 6 | partial | `docops.rs`, `geometry.rs` testes (inclui salvar/reabrir) | sem "ocultar pixels recortados" nem proporção fixa |
+| Endireitar (gira e recorta ao maior retângulo inscrito) | 6 | partial | `docops.rs` testes (retângulo inscrito, sem cantos vazios) | por ângulo numérico; sem linha de horizonte no canvas |
+| Tamanho da imagem (reamostragem, ppi) e tamanho da tela (âncora) | 6 | partial | `transform.rs`/`docops.rs` testes | filtro alargado ao reduzir; sem "reamostrar sem ppi" por unidade física na UI |
+| Girar/espelhar a tela inteira (exato) | 6 | partial | `docops.rs` testes (invertível, guias acompanham) | — |
+| Interpolação: vizinho mais próximo, bilinear, bicúbica (Catmull-Rom) | 6 | partial | `transform.rs` testes | sem Lanczos |
+| Réguas (px/pol/cm), guias (criar arrastando, mover, remover), grade, encaixe | 6 | partial | `snap.rs`, `docops.rs` testes; guias persistem no `.orva` v4 | uso com mouse não exercitado; régua some com a visão girada; Mover não encaixa |
+| Rotação da visão (±15°, redefinir) sem alterar a imagem | 6 | partial | `view.rs` testes (ida e volta, âncora, pan) | desenho girado não exercitado visualmente |
+| Estágio 6 depende de camadas do tamanho da tela | 6 | partial | — | transformações são destrutivas e recortadas à tela; deslocamento por camada e objetos inteligentes ficam para o Estágio 11 |
 | Demais estágios (5–16) | 5–16 | planned | — | ver [[ROADMAP]] |

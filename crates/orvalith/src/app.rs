@@ -1,5 +1,6 @@
 //! Estado da aplicação e interface: menus, abas, camadas, diálogos, atalhos e status.
 
+mod geocmds;
 mod io;
 mod selops;
 
@@ -11,13 +12,16 @@ use eframe::egui::{self, Key, Modifiers};
 use orvalith_core::{Document, Layer};
 
 use crate::canvas::OpenDoc;
+use geocmds::GeoCmd;
 use selops::{gray, SelCmd};
 
-use crate::canvas::{self, ViewCmd};
+use crate::canvas::{self, RulerUnit, ViewCmd, ViewOpts};
+use crate::geometry::TMode;
 use crate::layers_ui::{self, LayerCmd};
 use crate::prefs::Prefs;
 use crate::theme;
 use crate::tools::{Tool, ToolState};
+use orvalith_core::docops::{AlignKind, Orient};
 
 struct NewDocForm {
     width: u32,
@@ -59,6 +63,7 @@ enum Action {
     DeleteKey,
     Fill(bool),
     Confirm,
+    Geo(GeoCmd),
 }
 
 pub struct OrvalithApp {
@@ -77,6 +82,7 @@ pub struct OrvalithApp {
     prefs: Prefs,
     prefs_open: bool,
     cursor_doc: Option<[f32; 2]>,
+    view_opts: ViewOpts,
     last_title: String,
     tools: ToolState,
     layer_counter: u32,
@@ -107,6 +113,7 @@ impl OrvalithApp {
             prefs,
             prefs_open: false,
             cursor_doc: None,
+            view_opts: ViewOpts::default(),
             last_title: String::new(),
             tools,
             layer_counter: 1,
@@ -230,8 +237,9 @@ impl OrvalithApp {
             Action::CopySel(cut) => self.copy_cut(cut),
             Action::DeleteKey => self.delete_key(),
             Action::Fill(bg) => self.fill_selection(bg),
+            Action::Geo(c) => self.run_geo(c),
             Action::Confirm => {
-                if self.tools.sel.active() {
+                if self.tools.needs_confirm() {
                     if let Some(o) = self.docs.get_mut(self.active) {
                         self.tools.confirm(o);
                     }
@@ -270,7 +278,25 @@ impl OrvalithApp {
         let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
         ctx.input_mut(|i| {
             // Variantes com Shift primeiro: Ctrl+X casaria também com Ctrl+Shift+X.
-            let table: [Shortcut; 49] = [
+            let ca = Modifiers::COMMAND.plus(Modifiers::ALT);
+            let table: [Shortcut; 60] = [
+                (cs, Key::Semicolon, || Action::Geo(GeoCmd::ToggleSnap)),
+                (ca, Key::I, || Action::Geo(GeoCmd::ImageSize)),
+                (ca, Key::C, || Action::Geo(GeoCmd::CanvasSize)),
+                (C, Key::T, || Action::Geo(GeoCmd::Transform(TMode::Free))),
+                (C, Key::R, || Action::Geo(GeoCmd::ToggleRulers)),
+                (C, Key::Quote, || Action::Geo(GeoCmd::ToggleGrid)),
+                (C, Key::Semicolon, || Action::Geo(GeoCmd::ToggleGuides)),
+                (Modifiers::NONE, Key::C, || Action::Tool(Tool::Crop)),
+                (Modifiers::ALT, Key::ArrowLeft, || {
+                    Action::View(ViewCmd::Rotate(-15.0))
+                }),
+                (Modifiers::ALT, Key::ArrowRight, || {
+                    Action::View(ViewCmd::Rotate(15.0))
+                }),
+                (Modifiers::ALT, Key::ArrowUp, || {
+                    Action::View(ViewCmd::ResetRotation)
+                }),
                 (cs, Key::I, || Action::Select(SelCmd::Invert)),
                 (C, Key::A, || Action::Select(SelCmd::All)),
                 (C, Key::D, || Action::Select(SelCmd::Deselect)),
@@ -545,6 +571,90 @@ impl eframe::App for OrvalithApp {
                         }
                     }
                 });
+                ui.menu_button("Imagem", |ui| {
+                    let items: [(&str, &str, GeoCmd); 11] = [
+                        ("Tamanho da imagem…", "Ctrl+Alt+I", GeoCmd::ImageSize),
+                        ("Tamanho da tela…", "Ctrl+Alt+C", GeoCmd::CanvasSize),
+                        (
+                            "Girar tela 90° horário",
+                            "",
+                            GeoCmd::OrientCanvas(Orient::Cw90),
+                        ),
+                        (
+                            "Girar tela 90° anti-horário",
+                            "",
+                            GeoCmd::OrientCanvas(Orient::Ccw90),
+                        ),
+                        ("Girar tela 180°", "", GeoCmd::OrientCanvas(Orient::Rot180)),
+                        (
+                            "Espelhar tela horizontalmente",
+                            "",
+                            GeoCmd::OrientCanvas(Orient::FlipH),
+                        ),
+                        (
+                            "Espelhar tela verticalmente",
+                            "",
+                            GeoCmd::OrientCanvas(Orient::FlipV),
+                        ),
+                        ("Endireitar…", "", GeoCmd::Straighten),
+                        ("Recortar para a seleção", "", GeoCmd::CropToSelection),
+                        ("Limpar guias", "", GeoCmd::ClearGuides),
+                        (
+                            "Transformação livre",
+                            "Ctrl+T",
+                            GeoCmd::Transform(TMode::Free),
+                        ),
+                    ];
+                    for (label, sc, cmd) in items {
+                        if ui
+                            .add_enabled(has_doc, egui::Button::new(label).shortcut_text(sc))
+                            .clicked()
+                        {
+                            actions.push(Action::Geo(cmd));
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    ui.add_enabled_ui(has_doc, |ui| {
+                        ui.menu_button("Transformar camada", |ui| {
+                            let tr: [(&str, GeoCmd); 9] = [
+                                ("Inclinar", GeoCmd::Transform(TMode::Skew)),
+                                ("Distorcer", GeoCmd::Transform(TMode::Distort)),
+                                ("Perspectiva", GeoCmd::Transform(TMode::Perspective)),
+                                ("Deformar com malha", GeoCmd::Transform(TMode::Warp)),
+                                ("Espelhar horizontalmente", GeoCmd::FlipH),
+                                ("Espelhar verticalmente", GeoCmd::FlipV),
+                                ("Girar 90° horário", GeoCmd::RotateLayer(90.0)),
+                                ("Girar 90° anti-horário", GeoCmd::RotateLayer(-90.0)),
+                                ("Girar 180°", GeoCmd::RotateLayer(180.0)),
+                            ];
+                            for (label, cmd) in tr {
+                                if ui.button(label).clicked() {
+                                    actions.push(Action::Geo(cmd));
+                                    ui.close();
+                                }
+                            }
+                        });
+                        ui.menu_button("Alinhar camadas", |ui| {
+                            let al: [(&str, GeoCmd); 8] = [
+                                ("À esquerda", GeoCmd::Align(AlignKind::Left)),
+                                ("Centro horizontal", GeoCmd::Align(AlignKind::HCenter)),
+                                ("À direita", GeoCmd::Align(AlignKind::Right)),
+                                ("Ao topo", GeoCmd::Align(AlignKind::Top)),
+                                ("Centro vertical", GeoCmd::Align(AlignKind::VCenter)),
+                                ("À base", GeoCmd::Align(AlignKind::Bottom)),
+                                ("Distribuir na horizontal", GeoCmd::Distribute(true)),
+                                ("Distribuir na vertical", GeoCmd::Distribute(false)),
+                            ];
+                            for (label, cmd) in al {
+                                if ui.button(label).clicked() {
+                                    actions.push(Action::Geo(cmd));
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+                });
                 ui.menu_button("Visualizar", |ui| {
                     let items = [
                         ("Ajustar à janela", "Ctrl+0", ViewCmd::Fit),
@@ -553,6 +663,60 @@ impl eframe::App for OrvalithApp {
                         ("Afastar", "Ctrl+-", ViewCmd::ZoomOut),
                     ];
                     for (label, sc, cmd) in items {
+                        if ui
+                            .add_enabled(has_doc, egui::Button::new(label).shortcut_text(sc))
+                            .clicked()
+                        {
+                            actions.push(Action::View(cmd));
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    let vo = self.view_opts;
+                    for (label, sc, on, cmd) in [
+                        ("Réguas", "Ctrl+R", vo.rulers, GeoCmd::ToggleRulers),
+                        ("Grade", "Ctrl+'", vo.grid, GeoCmd::ToggleGrid),
+                        ("Guias", "Ctrl+;", vo.guides, GeoCmd::ToggleGuides),
+                        ("Encaixar", "Ctrl+Shift+;", vo.snap, GeoCmd::ToggleSnap),
+                    ] {
+                        let text = format!("{} {label}", if on { "✓" } else { "  " });
+                        if ui.add(egui::Button::new(text).shortcut_text(sc)).clicked() {
+                            actions.push(Action::Geo(cmd));
+                            ui.close();
+                        }
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Grade (px)");
+                        ui.add(
+                            egui::DragValue::new(&mut self.view_opts.snap_opts.grid_size)
+                                .range(2.0..=1000.0),
+                        );
+                    });
+                    ui.menu_button("Unidade da régua", |ui| {
+                        for u in [RulerUnit::Px, RulerUnit::In, RulerUnit::Cm] {
+                            if ui
+                                .selectable_label(self.view_opts.unit == u, u.label())
+                                .clicked()
+                            {
+                                actions.push(Action::Geo(GeoCmd::SetUnit(u)));
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.separator();
+                    for (label, sc, cmd) in [
+                        ("Girar visão 15° horário", "Alt+→", ViewCmd::Rotate(15.0)),
+                        (
+                            "Girar visão 15° anti-horário",
+                            "Alt+←",
+                            ViewCmd::Rotate(-15.0),
+                        ),
+                        (
+                            "Redefinir rotação da visão",
+                            "Alt+↑",
+                            ViewCmd::ResetRotation,
+                        ),
+                    ] {
                         if ui
                             .add_enabled(has_doc, egui::Button::new(label).shortcut_text(sc))
                             .clicked()
@@ -626,7 +790,21 @@ impl eframe::App for OrvalithApp {
             });
 
             egui::Panel::top("options").show(root, |ui| {
-                if self.tools.options_ui(ui, &mut self.prefs.brush_presets) {
+                if let (Some(t), Some(open)) = (
+                    self.tools.geo.transform.as_mut(),
+                    self.docs.get_mut(self.active),
+                ) {
+                    let (changed, apply, cancel) = t.options_ui(ui);
+                    if changed {
+                        t.refresh(open);
+                    }
+                    if apply {
+                        actions.push(Action::Confirm);
+                    }
+                    if cancel {
+                        actions.push(Action::CancelTool);
+                    }
+                } else if self.tools.options_ui(ui, &mut self.prefs.brush_presets) {
                     self.persist_tools();
                 }
             });
@@ -670,7 +848,8 @@ impl eframe::App for OrvalithApp {
                     Action::View(c) => Some(*c),
                     _ => None,
                 });
-                let overlay = self.tools.overlay(self.cursor_doc);
+                let mut overlay = self.tools.overlay(self.cursor_doc);
+                overlay.view = self.view_opts;
                 let out = canvas::show(ui, open, cmd, space_down, &overlay);
                 self.cursor_doc = out.hover;
                 if self.tools.sel.picking() {
@@ -736,6 +915,9 @@ impl eframe::App for OrvalithApp {
         self.show_dialogs(&ctx);
         if let Some(open) = self.docs.get_mut(self.active) {
             self.tools.sel.show_dialogs(&ctx, open, self.tools.fg);
+            if let Some(n) = self.tools.geo.show_dialogs(&ctx, open, self.tools.bg) {
+                self.tools.notice = Some(n);
+            }
         }
     }
 }

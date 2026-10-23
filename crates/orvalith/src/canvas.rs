@@ -4,9 +4,12 @@ use eframe::egui::{self, Color32, CursorIcon, PointerButton, Rect, Sense, Stroke
 use std::collections::HashMap;
 
 use orvalith_core::compose::RenderOpts;
+use orvalith_core::docops::{DocEdit, DocState};
 use orvalith_core::edit::{LayersEdit, PixelPatch};
 use orvalith_core::geom::Rect as PixRect;
+use orvalith_core::snap::{snap_point, SnapOpts};
 use orvalith_core::view::View;
+use orvalith_core::Guide;
 use orvalith_core::{compose, Document, History, Layer, LayerId};
 
 /// Maior lado suportado pela textura de visualização nesta fase (sem tiles ainda).
@@ -41,6 +44,7 @@ pub struct OpenDoc {
     /// Máscara rápida: um documento cinza (255 = selecionado) editado com as ferramentas de pintura.
     pub qm: Option<Box<OpenDoc>>,
     sel_edges: Option<(usize, Vec<[f32; 4]>)>,
+    guide_drag: Option<GuideDrag>,
     /// Retângulo envolvente da seleção atual (para a barra de status).
     pub sel_info: Option<PixRect>,
     /// Última revisão gravada na cópia de recuperação.
@@ -74,6 +78,7 @@ impl OpenDoc {
             renaming: None,
             qm: None,
             sel_edges: None,
+            guide_drag: None,
             sel_info: None,
             autosaved_rev: None,
             active_layer,
@@ -162,6 +167,29 @@ impl OpenDoc {
         }
     }
 
+    /// Aplica um novo estado geométrico (recortar, redimensionar…) como uma ação de histórico.
+    pub fn apply_state(&mut self, label: &str, after: DocState) {
+        let before = DocState::of(&self.doc);
+        self.history
+            .execute(&mut self.doc, Box::new(DocEdit::new(label, before, after)));
+        self.fit_mode = true;
+        self.sel_edges = None;
+        self.thumbs_rev = 0;
+    }
+
+    /// Registra uma troca de estado já aplicada ao documento (transformação confirmada).
+    pub fn record_state(&mut self, label: &str, before: DocState) {
+        let partial_ok = self.tracked_rev == self.doc.revision;
+        let after = DocState::of(&self.doc);
+        self.history
+            .record(&mut self.doc, Box::new(DocEdit::new(label, before, after)));
+        if partial_ok {
+            self.dirty = Some(PixRect::full(self.doc.width, self.doc.height));
+            self.tracked_rev = self.doc.revision;
+        }
+        self.thumbs_rev = 0;
+    }
+
     /// Registra no histórico uma alteração de pixels já exibida (sem reenviar a textura toda).
     pub fn record_patch(&mut self, patch: PixelPatch) {
         let partial_ok = self.tracked_rev == self.doc.revision;
@@ -174,31 +202,100 @@ impl OpenDoc {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ViewCmd {
     Fit,
     Actual,
     ZoomIn,
     ZoomOut,
+    /// Gira a visão (graus, horário); não altera a imagem.
+    Rotate(f32),
+    ResetRotation,
 }
 
-/// Forma de seleção em construção, em coordenadas do documento.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RulerUnit {
+    Px,
+    In,
+    Cm,
+}
+
+impl RulerUnit {
+    pub fn label(self) -> &'static str {
+        match self {
+            RulerUnit::Px => "Pixels",
+            RulerUnit::In => "Polegadas",
+            RulerUnit::Cm => "Centímetros",
+        }
+    }
+
+    /// Pixels do documento por unidade.
+    fn px_per_unit(self, ppi: f32) -> f32 {
+        match self {
+            RulerUnit::Px => 1.0,
+            RulerUnit::In => ppi.max(1.0),
+            RulerUnit::Cm => ppi.max(1.0) / 2.54,
+        }
+    }
+}
+
+/// Opções de visualização compartilhadas (réguas, grade, guias, encaixe).
+#[derive(Debug, Clone, Copy)]
+pub struct ViewOpts {
+    pub rulers: bool,
+    pub grid: bool,
+    pub guides: bool,
+    pub snap: bool,
+    pub snap_opts: SnapOpts,
+    pub unit: RulerUnit,
+}
+
+impl Default for ViewOpts {
+    fn default() -> Self {
+        Self {
+            rulers: true,
+            grid: false,
+            guides: true,
+            snap: true,
+            snap_opts: SnapOpts::default(),
+            unit: RulerUnit::Px,
+        }
+    }
+}
+
+/// Arrasto de guia em andamento (nova, ou uma existente sendo movida/removida).
+struct GuideDrag {
+    index: Option<usize>,
+    vertical: bool,
+    pos: f32,
+    remove: bool,
+    before: DocState,
+}
+
+/// Forma em construção, em coordenadas do documento.
 #[derive(Clone)]
 pub enum Shape {
     Rect((f32, f32), (f32, f32)),
     Ellipse((f32, f32), (f32, f32)),
     Poly(Vec<(f32, f32)>),
+    /// Malha `colunas × linhas` de pontos de controle (linha a linha).
+    Mesh(usize, usize, Vec<(f32, f32)>),
 }
 
 /// Informações de desenho vindas da ferramenta atual.
 #[derive(Default, Clone)]
 pub struct Overlay {
-    /// Forma de seleção em construção (contorno tracejado).
+    /// Forma de seleção/transformação em construção (contorno tracejado).
     pub shape: Option<Shape>,
+    /// Alças desenhadas como quadradinhos (coordenadas do documento).
+    pub points: Vec<(f32, f32)>,
     /// A ferramenta atual usa o cursor de mira.
     pub tool_cursor: bool,
     /// Raio do pincel em pixels do documento (para o contorno sob o cursor).
     pub brush_radius_doc: Option<f32>,
+    /// Encaixar os pontos do ponteiro em guias/grade/bordas.
+    pub snap_pointer: bool,
+    pub view: ViewOpts,
 }
 
 /// Eventos de ponteiro do quadro, já em coordenadas do documento.
@@ -217,9 +314,13 @@ pub struct CanvasOut {
     pub double_click: bool,
     /// Pressão da caneta (0..=1) quando o sistema a informa; 1.0 com mouse.
     pub pressure: f32,
+    /// Pontos de tela por pixel do documento (para tamanhos de alças).
+    pub zoom: f32,
 }
 
-/// Desenha o canvas, trata navegação e devolve os eventos de ponteiro para as ferramentas.
+const RULER: f32 = 20.0;
+
+/// Desenha o canvas, trata navegação, guias e devolve os eventos de ponteiro para as ferramentas.
 pub fn show(
     ui: &mut egui::Ui,
     open: &mut OpenDoc,
@@ -227,15 +328,26 @@ pub fn show(
     space_down: bool,
     overlay: &Overlay,
 ) -> CanvasOut {
-    let (rect, resp) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+    let (full, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+    let rotated = open.view.is_some_and(|v| v.rotation_deg != 0.0);
+    let ruler = if overlay.view.rulers && !rotated {
+        RULER
+    } else {
+        0.0
+    };
+    let rect = Rect::from_min_max(full.min + egui::vec2(ruler, ruler), full.max);
+    let resp = ui.interact(rect, ui.scope_id().with("canvas"), Sense::click_and_drag());
     let ppp = ui.ctx().pixels_per_point();
     let vp = [rect.width(), rect.height()];
     let dims = [open.doc.width, open.doc.height];
+    let rotation = open.view.map_or(0.0, |v| v.rotation_deg);
 
     match cmd {
         Some(ViewCmd::Fit) => open.fit_mode = true,
         Some(ViewCmd::Actual) => {
-            open.view = Some(View::actual_size(dims, vp, ppp));
+            let mut v = View::actual_size(dims, vp, ppp);
+            v.rotation_deg = rotation;
+            open.view = Some(v);
             open.fit_mode = false;
         }
         Some(c @ (ViewCmd::ZoomIn | ViewCmd::ZoomOut)) => {
@@ -249,14 +361,26 @@ pub fn show(
                 open.fit_mode = false;
             }
         }
+        Some(ViewCmd::Rotate(d)) => {
+            if let Some(v) = open.view.as_mut() {
+                v.rotate_by(d);
+            }
+        }
+        Some(ViewCmd::ResetRotation) => {
+            if let Some(v) = open.view.as_mut() {
+                let r = v.rotation_deg;
+                v.rotate_by(-r);
+            }
+        }
         None => {}
     }
     if open.fit_mode || open.view.is_none() {
-        open.view = Some(View::fit(dims, vp, FIT_MARGIN, 1.0 / ppp));
+        open.view = Some(View::fit_rotated(dims, vp, FIT_MARGIN, 1.0 / ppp, rotation));
     }
     let mut view = open
         .view
         .unwrap_or_else(|| View::fit(dims, vp, FIT_MARGIN, 1.0));
+    view.pivot = [vp[0] / 2.0, vp[1] / 2.0];
 
     // Zoom com roda/pinça ancorado no ponteiro.
     if resp.hovered() {
@@ -292,9 +416,27 @@ pub fn show(
     open.zoom_percent = view.zoom * ppp * 100.0;
 
     let to_doc = |p: egui::Pos2| view.view_to_doc([p.x - rect.min.x, p.y - rect.min.y]);
+    let guides_now = open.doc.guides.clone();
+    let thr = 8.0 / view.zoom;
+    let snap_on = overlay.snap_pointer && overlay.view.snap;
+    let snap = |d: [f32; 2]| -> [f32; 2] {
+        if snap_on {
+            let (x, y) = snap_point(
+                (d[0], d[1]),
+                &guides_now,
+                &overlay.view.snap_opts,
+                (dims[0], dims[1]),
+                thr,
+            );
+            [x, y]
+        } else {
+            d
+        }
+    };
     let mut out = CanvasOut {
         pressure: 1.0,
-        hover: resp.hover_pos().map(to_doc),
+        zoom: view.zoom,
+        hover: resp.hover_pos().map(to_doc).map(snap),
         ..Default::default()
     };
     let inside = ui.rect_contains_pointer(rect) && resp.hovered();
@@ -333,22 +475,137 @@ pub fn show(
     if let Some(f) = force {
         out.pressure = f.clamp(0.0, 1.0);
     }
-    if pressed && inside && !space_down && !panning {
-        out.pressed = latest.map(to_doc);
+
+    // ---- Guias: criar arrastando das réguas, mover ou remover arrastando de volta ----
+    let mut guide_consumed = open.guide_drag.is_some();
+    if open.guide_drag.is_none() && pressed && !space_down && !panning {
+        if let Some(p) = latest {
+            let in_top = ruler > 0.0 && p.y >= full.min.y && p.y < rect.min.y && p.x >= rect.min.x;
+            let in_left = ruler > 0.0 && p.x >= full.min.x && p.x < rect.min.x && p.y >= rect.min.y;
+            let mut start: Option<(Option<usize>, bool)> = None;
+            if in_top {
+                start = Some((None, false));
+            } else if in_left {
+                start = Some((None, true));
+            } else if overlay.view.guides && inside && !rotated {
+                for (i, g) in open.doc.guides.iter().enumerate() {
+                    let s = view.doc_to_view([g.pos, g.pos]);
+                    let d = if g.vertical {
+                        (p.x - rect.min.x - s[0]).abs()
+                    } else {
+                        (p.y - rect.min.y - s[1]).abs()
+                    };
+                    if d <= 4.0 {
+                        start = Some((Some(i), g.vertical));
+                        break;
+                    }
+                }
+            }
+            if let Some((index, vertical)) = start {
+                open.guide_drag = Some(GuideDrag {
+                    index,
+                    vertical,
+                    pos: 0.0,
+                    remove: false,
+                    before: DocState::of(&open.doc),
+                });
+                guide_consumed = true;
+            }
+        }
+    }
+    if let Some(gd) = open.guide_drag.as_mut() {
+        if let Some(p) = latest {
+            let d = to_doc(p);
+            gd.pos = if gd.vertical { d[0] } else { d[1] };
+            let in_ruler_zone = ruler > 0.0 && (p.x < rect.min.x || p.y < rect.min.y);
+            gd.remove = !rect.expand(0.0).contains(p) && !in_ruler_zone
+                || (in_ruler_zone && gd.index.is_some());
+            if gd.index.is_none() {
+                gd.remove = !rect.contains(p);
+            }
+        }
+        ui.ctx().set_cursor_icon(if gd.vertical {
+            CursorIcon::ResizeHorizontal
+        } else {
+            CursorIcon::ResizeVertical
+        });
+        if released || !down {
+            let gd = open.guide_drag.take();
+            if let Some(gd) = gd {
+                let mut after = gd.before.clone();
+                match (gd.index, gd.remove) {
+                    (Some(i), true) => {
+                        if i < after.guides.len() {
+                            after.guides.remove(i);
+                        }
+                    }
+                    (Some(i), false) => {
+                        if let Some(g) = after.guides.get_mut(i) {
+                            g.pos = gd.pos.round();
+                        }
+                    }
+                    (None, false) => after.guides.push(Guide {
+                        vertical: gd.vertical,
+                        pos: gd.pos.round(),
+                    }),
+                    (None, true) => {}
+                }
+                if after.guides != gd.before.guides {
+                    open.execute_nonpixel(Box::new(DocEdit::new("Guias", gd.before, after)));
+                    open.doc.modified = true;
+                }
+            }
+        }
+    } else if resp.hovered() && overlay.view.guides && !rotated && !space_down {
+        if let Some(p) = resp.hover_pos() {
+            for g in &open.doc.guides {
+                let s = view.doc_to_view([g.pos, g.pos]);
+                let d = if g.vertical {
+                    (p.x - rect.min.x - s[0]).abs()
+                } else {
+                    (p.y - rect.min.y - s[1]).abs()
+                };
+                if d <= 4.0 {
+                    ui.ctx().set_cursor_icon(if g.vertical {
+                        CursorIcon::ResizeHorizontal
+                    } else {
+                        CursorIcon::ResizeVertical
+                    });
+                }
+            }
+        }
+    }
+
+    if guide_consumed {
+        out.down = false;
+        out.released = false;
+    } else if pressed && inside && !space_down && !panning {
+        out.pressed = latest.map(to_doc).map(snap);
     } else if down && !space_down {
-        out.moves = pts.into_iter().map(to_doc).collect();
+        out.moves = pts.into_iter().map(to_doc).map(snap).collect();
         if out.moves.is_empty() {
-            out.moves.extend(latest.map(to_doc));
+            out.moves.extend(latest.map(to_doc).map(snap));
         }
     }
 
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
-    let img_rect = Rect::from_min_size(
-        rect.min + egui::vec2(view.offset[0], view.offset[1]),
-        egui::vec2(dims[0] as f32 * view.zoom, dims[1] as f32 * view.zoom),
-    );
-    draw_checkerboard(&painter, img_rect, rect);
+    let ts = |p: [f32; 2]| {
+        let v = view.doc_to_view(p);
+        rect.min + egui::vec2(v[0], v[1])
+    };
+    let (dw, dh) = (dims[0] as f32, dims[1] as f32);
+    let corners = [ts([0.0, 0.0]), ts([dw, 0.0]), ts([dw, dh]), ts([0.0, dh])];
+    let full_uv = [
+        egui::pos2(0.0, 0.0),
+        egui::pos2(1.0, 0.0),
+        egui::pos2(1.0, 1.0),
+        egui::pos2(0.0, 1.0),
+    ];
+    // Xadrez de transparência: textura repetida de 16 px, ancorada na tela.
+    let checker = checker_texture(ui.ctx());
+    let ck_uv = corners.map(|c| egui::pos2((c.x - rect.min.x) / 16.0, (c.y - rect.min.y) / 16.0));
+    draw_quad(&painter, checker.id(), corners, ck_uv);
 
     if dims[0].max(dims[1]) > MAX_TEXTURE_SIDE {
         painter.text(
@@ -360,15 +617,36 @@ pub fn show(
         );
     } else {
         sync_texture(ui.ctx(), open, "doc", &render_composite);
-        let full_uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
         if let Some((_, tex)) = &open.texture {
-            painter.image(tex.id(), img_rect, full_uv, Color32::WHITE);
+            draw_quad(&painter, tex.id(), corners, full_uv);
         }
         if let Some(qm) = open.qm.as_deref_mut() {
             sync_texture(ui.ctx(), qm, "qmask", &render_quick_mask);
             if let Some((_, tex)) = &qm.texture {
-                painter.image(tex.id(), img_rect, full_uv, Color32::WHITE);
+                draw_quad(&painter, tex.id(), corners, full_uv);
             }
+        }
+    }
+
+    if overlay.view.grid {
+        draw_grid(
+            &painter,
+            rect,
+            &view,
+            dims,
+            overlay.view.snap_opts.grid_size,
+        );
+    }
+    if overlay.view.guides {
+        let drag = open.guide_drag.as_ref();
+        for (i, g) in open.doc.guides.iter().enumerate() {
+            if drag.is_some_and(|d| d.index == Some(i)) {
+                continue;
+            }
+            draw_guide(&painter, &ts, g.vertical, g.pos, false);
+        }
+        if let Some(d) = drag.filter(|d| !d.remove) {
+            draw_guide(&painter, &ts, d.vertical, d.pos, true);
         }
     }
 
@@ -379,6 +657,17 @@ pub fn show(
     }
     if let Some(shape) = &overlay.shape {
         draw_shape(&painter, shape, &view, rect, phase);
+    }
+    for p in &overlay.points {
+        let c = ts([p.0, p.1]);
+        let r = Rect::from_center_size(c, egui::vec2(8.0, 8.0));
+        painter.rect_filled(r, 1.0, Color32::WHITE);
+        painter.rect_stroke(
+            r,
+            1.0,
+            Stroke::new(1.0, Color32::BLACK),
+            egui::StrokeKind::Inside,
+        );
     }
     if animate {
         ui.ctx()
@@ -392,7 +681,221 @@ pub fn show(
             painter.circle_stroke(p, rr, Stroke::new(1.0, Color32::WHITE));
         }
     }
+
+    if ruler > 0.0 {
+        let rp = ui.painter_at(full);
+        draw_rulers(
+            &rp,
+            full,
+            rect,
+            &view,
+            (open.doc.ppi, overlay.view.unit),
+            resp.hover_pos()
+                .map(|p| [p.x - rect.min.x, p.y - rect.min.y]),
+        );
+    }
     out
+}
+
+fn checker_texture(ctx: &egui::Context) -> egui::TextureHandle {
+    let id = egui::Id::unique("orvalith_checker_texture");
+    if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return t;
+    }
+    let mut bytes = Vec::with_capacity(256);
+    for y in 0..16 {
+        for x in 0..16 {
+            bytes.push(if (x / 8 + y / 8) % 2 == 1 { 150 } else { 200 });
+        }
+    }
+    let img = egui::ColorImage::from_gray([16, 16], &bytes);
+    let opts = egui::TextureOptions {
+        wrap_mode: egui::TextureWrapMode::Repeat,
+        ..egui::TextureOptions::NEAREST
+    };
+    let tex = ctx.load_texture("orvalith_checker", img, opts);
+    ctx.data_mut(|d| d.insert_temp(id, tex.clone()));
+    tex
+}
+
+fn draw_quad(
+    painter: &egui::Painter,
+    tex: egui::TextureId,
+    c: [egui::Pos2; 4],
+    uv: [egui::Pos2; 4],
+) {
+    let mut mesh = egui::Mesh::with_texture(tex);
+    for i in 0..4 {
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: c[i],
+            uv: uv[i],
+            color: Color32::WHITE,
+        });
+    }
+    mesh.indices = vec![0, 1, 2, 0, 2, 3];
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+fn draw_guide(
+    painter: &egui::Painter,
+    ts: &dyn Fn([f32; 2]) -> egui::Pos2,
+    vertical: bool,
+    pos: f32,
+    preview: bool,
+) {
+    const FAR: f32 = 1.0e5;
+    let (a, b) = if vertical {
+        (ts([pos, -FAR]), ts([pos, FAR]))
+    } else {
+        (ts([-FAR, pos]), ts([FAR, pos]))
+    };
+    let color = if preview {
+        Color32::from_rgb(0x60, 0xe0, 0xff)
+    } else {
+        Color32::from_rgb(0x2f, 0xb8, 0xe6)
+    };
+    painter.line_segment([a, b], Stroke::new(1.0, color));
+}
+
+fn draw_grid(painter: &egui::Painter, rect: Rect, view: &View, dims: [u32; 2], size: f32) {
+    if size < 1.0 || size * view.zoom < 4.0 {
+        return;
+    }
+    let stroke = Stroke::new(1.0, Color32::from_white_alpha(40));
+    let to = |p: [f32; 2]| {
+        let v = view.doc_to_view(p);
+        rect.min + egui::vec2(v[0], v[1])
+    };
+    let (w, h) = (dims[0] as f32, dims[1] as f32);
+    let mut x = 0.0;
+    let mut n = 0;
+    while x <= w && n < 600 {
+        painter.line_segment([to([x, 0.0]), to([x, h])], stroke);
+        x += size;
+        n += 1;
+    }
+    let mut y = 0.0;
+    n = 0;
+    while y <= h && n < 600 {
+        painter.line_segment([to([0.0, y]), to([w, y])], stroke);
+        y += size;
+        n += 1;
+    }
+}
+
+/// Passo "bonito" (1, 2, 5 × 10^n) em unidades da régua para que haja ~60 pt entre rótulos.
+fn nice_step(units_per_point: f32) -> f32 {
+    let target = units_per_point * 60.0;
+    let pow = 10f32.powf(target.log10().floor());
+    for m in [1.0, 2.0, 5.0, 10.0] {
+        if m * pow >= target {
+            return m * pow;
+        }
+    }
+    10.0 * pow
+}
+
+fn draw_rulers(
+    painter: &egui::Painter,
+    full: Rect,
+    rect: Rect,
+    view: &View,
+    (ppi, unit): (f32, RulerUnit),
+    hover: Option<[f32; 2]>,
+) {
+    let bg = Color32::from_gray(45);
+    let fg = Color32::from_gray(190);
+    let font = egui::FontId::proportional(9.0);
+    painter.rect_filled(
+        Rect::from_min_max(full.min, egui::pos2(full.max.x, rect.min.y)),
+        0.0,
+        bg,
+    );
+    painter.rect_filled(
+        Rect::from_min_max(full.min, egui::pos2(rect.min.x, full.max.y)),
+        0.0,
+        bg,
+    );
+    let ppu = unit.px_per_unit(ppi); // pixels do documento por unidade
+    let step_units = nice_step(1.0 / (ppu * view.zoom));
+    let step_px = step_units * ppu;
+    for horizontal in [true, false] {
+        let (origin, len, start, end) = if horizontal {
+            (view.offset[0], rect.width(), 0.0, rect.width())
+        } else {
+            (view.offset[1], rect.height(), 0.0, rect.height())
+        };
+        let first = ((start - origin) / view.zoom / step_px).floor() as i64;
+        let last = ((end - origin) / view.zoom / step_px).ceil() as i64;
+        let _ = len;
+        for k in first..=last {
+            let doc = k as f32 * step_px;
+            let screen = origin + doc * view.zoom;
+            for sub in 0..5 {
+                let pos = screen + sub as f32 * step_px * view.zoom / 5.0;
+                if pos < 0.0
+                    || pos
+                        > if horizontal {
+                            rect.width()
+                        } else {
+                            rect.height()
+                        }
+                {
+                    continue;
+                }
+                let (a, b) = if horizontal {
+                    let x = rect.min.x + pos;
+                    let t = if sub == 0 { 0.0 } else { 12.0 };
+                    (egui::pos2(x, full.min.y + t), egui::pos2(x, rect.min.y))
+                } else {
+                    let y = rect.min.y + pos;
+                    let t = if sub == 0 { 0.0 } else { 12.0 };
+                    (egui::pos2(full.min.x + t, y), egui::pos2(rect.min.x, y))
+                };
+                painter.line_segment([a, b], Stroke::new(1.0, fg));
+            }
+            let label = format!("{}", (k as f32 * step_units * 100.0).round() / 100.0);
+            if horizontal {
+                painter.text(
+                    egui::pos2(rect.min.x + screen + 2.0, full.min.y),
+                    egui::Align2::LEFT_TOP,
+                    label,
+                    font.clone(),
+                    fg,
+                );
+            } else {
+                painter.text(
+                    egui::pos2(full.min.x + 1.0, rect.min.y + screen + 1.0),
+                    egui::Align2::LEFT_TOP,
+                    label
+                        .chars()
+                        .map(|c| format!("{c}\n"))
+                        .collect::<String>()
+                        .trim_end()
+                        .to_string(),
+                    font.clone(),
+                    fg,
+                );
+            }
+        }
+    }
+    if let Some(h) = hover {
+        let c = Color32::from_rgb(0x2f, 0xb8, 0xa6);
+        painter.line_segment(
+            [
+                egui::pos2(rect.min.x + h[0], full.min.y),
+                egui::pos2(rect.min.x + h[0], rect.min.y),
+            ],
+            Stroke::new(1.0, c),
+        );
+        painter.line_segment(
+            [
+                egui::pos2(full.min.x, rect.min.y + h[1]),
+                egui::pos2(rect.min.x, rect.min.y + h[1]),
+            ],
+            Stroke::new(1.0, c),
+        );
+    }
 }
 
 /// Atualiza a textura: só a região alterada quando possível, ou tudo se a mudança foi geral.
@@ -536,11 +1039,8 @@ fn draw_selection(
         open.sel_info = orvalith_core::selection::bounds(&mask, open.doc.width, open.doc.height);
     }
     let to_screen = |x: f32, y: f32| {
-        rect.min
-            + egui::vec2(
-                view.offset[0] + x * view.zoom,
-                view.offset[1] + y * view.zoom,
-            )
+        let v = view.doc_to_view([x, y]);
+        rect.min + egui::vec2(v[0], v[1])
     };
     if let Some((_, edges)) = &open.sel_edges {
         let mut drawn = 0;
@@ -560,12 +1060,24 @@ fn draw_selection(
 
 fn draw_shape(painter: &egui::Painter, shape: &Shape, view: &View, rect: Rect, phase: f32) {
     let to_screen = |p: (f32, f32)| {
-        rect.min
-            + egui::vec2(
-                view.offset[0] + p.0 * view.zoom,
-                view.offset[1] + p.1 * view.zoom,
-            )
+        let v = view.doc_to_view([p.0, p.1]);
+        rect.min + egui::vec2(v[0], v[1])
     };
+    if let Shape::Mesh(cols, rows, p) = shape {
+        if p.len() == cols * rows {
+            for j in 0..*rows {
+                let line: Vec<egui::Pos2> =
+                    (0..*cols).map(|i| to_screen(p[j * cols + i])).collect();
+                ants(painter, &line, phase);
+            }
+            for i in 0..*cols {
+                let line: Vec<egui::Pos2> =
+                    (0..*rows).map(|j| to_screen(p[j * cols + i])).collect();
+                ants(painter, &line, phase);
+            }
+        }
+        return;
+    }
     let pts: Vec<egui::Pos2> = match shape {
         Shape::Rect(a, b) => vec![
             to_screen(*a),
@@ -585,34 +1097,9 @@ fn draw_shape(painter: &egui::Painter, shape: &Shape, view: &View, rect: Rect, p
                 .collect()
         }
         Shape::Poly(p) => p.iter().map(|q| to_screen(*q)).collect(),
+        Shape::Mesh(..) => Vec::new(),
     };
     if pts.len() >= 2 {
         ants(painter, &pts, phase);
-    }
-}
-
-/// Xadrez de 8 pontos desenhado só na parte visível do documento.
-fn draw_checkerboard(painter: &egui::Painter, img: Rect, viewport: Rect) {
-    let vis = img.intersect(viewport);
-    if vis.width() <= 0.0 || vis.height() <= 0.0 {
-        return;
-    }
-    let cell: f32 = 8.0;
-    painter.rect_filled(vis, 0.0, Color32::from_gray(200));
-    let dark = Color32::from_gray(150);
-    let c0 = ((vis.min.x - img.min.x) / cell).floor() as i32;
-    let c1 = ((vis.max.x - img.min.x) / cell).ceil() as i32;
-    let r0 = ((vis.min.y - img.min.y) / cell).floor() as i32;
-    let r1 = ((vis.max.y - img.min.y) / cell).ceil() as i32;
-    for r in r0..r1 {
-        for c in c0..c1 {
-            if (r + c).rem_euclid(2) == 1 {
-                let min = img.min + egui::vec2(c as f32 * cell, r as f32 * cell);
-                let cell_rect = Rect::from_min_size(min, egui::vec2(cell, cell)).intersect(vis);
-                if cell_rect.width() > 0.0 && cell_rect.height() > 0.0 {
-                    painter.rect_filled(cell_rect, 0.0, dark);
-                }
-            }
-        }
     }
 }

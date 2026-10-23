@@ -14,11 +14,13 @@ use orvalith_core::paint::{builtin_presets, BrushParams, BrushPreset, StrokeMode
 use orvalith_core::{compose, DocumentId, Layer, LayerId};
 
 use crate::canvas::{CanvasOut, OpenDoc, Overlay};
-use crate::select::SelectState;
+use crate::geometry::{self, GeoState};
+use crate::select::{is_selection_tool, SelectState};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tool {
     Move,
+    Crop,
     Marquee,
     Ellipse,
     Lasso,
@@ -33,8 +35,9 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub const ALL: [Tool; 12] = [
+    pub const ALL: [Tool; 13] = [
         Tool::Move,
+        Tool::Crop,
         Tool::Marquee,
         Tool::Ellipse,
         Tool::Lasso,
@@ -51,6 +54,7 @@ impl Tool {
     pub fn label(self) -> &'static str {
         match self {
             Tool::Move => "Mover",
+            Tool::Crop => "Recortar",
             Tool::Marquee => "Seleção retangular",
             Tool::Ellipse => "Seleção elíptica",
             Tool::Lasso => "Laço",
@@ -68,6 +72,7 @@ impl Tool {
     pub fn shortcut(self) -> &'static str {
         match self {
             Tool::Move => "V",
+            Tool::Crop => "C",
             Tool::Marquee => "M",
             Tool::Ellipse => "Shift+M",
             Tool::Lasso => "L",
@@ -131,6 +136,7 @@ pub struct ToolState {
     pub pressure_size: bool,
     pub notice: Option<String>,
     pub sel: SelectState,
+    pub geo: GeoState,
     preset_name: String,
     active: Option<Active>,
 }
@@ -204,6 +210,7 @@ impl ToolState {
             pressure_size: true,
             notice: None,
             sel: SelectState::default(),
+            geo: GeoState::default(),
             preset_name: String::new(),
             active: None,
         }
@@ -211,7 +218,12 @@ impl ToolState {
 
     /// Há um traço ou gradiente em andamento (troca de ferramenta/aba é adiada).
     pub fn is_busy(&self) -> bool {
-        self.active.is_some()
+        self.active.is_some() || self.geo.busy()
+    }
+
+    /// Enter tem algo a confirmar (transformação, recorte ou laço poligonal).
+    pub fn needs_confirm(&self) -> bool {
+        self.geo.busy() || self.geo.crop.active() || self.sel.active()
     }
 
     pub fn set_tool(&mut self, tool: Tool) {
@@ -240,15 +252,36 @@ impl ToolState {
     }
 
     pub fn overlay(&self, hover: Option<[f32; 2]>) -> Overlay {
+        if let Some(t) = &self.geo.transform {
+            return Overlay {
+                shape: Some(t.shape()),
+                points: t.points(),
+                tool_cursor: true,
+                snap_pointer: true,
+                ..Overlay::default()
+            };
+        }
+        if self.tool == Tool::Crop {
+            return Overlay {
+                shape: self.geo.crop.shape(),
+                points: self.geo.crop.points(),
+                tool_cursor: true,
+                snap_pointer: true,
+                ..Overlay::default()
+            };
+        }
         Overlay {
             shape: self.sel.shape(self.tool, hover),
             tool_cursor: true,
+            snap_pointer: is_selection_tool(self.tool),
             brush_radius_doc: self.tool.paints_strokes().then_some(self.brush.size / 2.0),
+            ..Overlay::default()
         }
     }
 
     /// Cancela um gradiente em andamento restaurando os pixels originais (tecla Esc).
     pub fn cancel(&mut self, open: &mut OpenDoc) {
+        self.geo.cancel(open);
         self.sel.cancel(open);
         match self.active.take() {
             Some(Active::Gradient {
@@ -273,7 +306,14 @@ impl ToolState {
 
     /// Confirma a operação em andamento (Enter): fecha o laço poligonal.
     pub fn confirm(&mut self, open: &mut OpenDoc) {
-        self.sel.confirm(open);
+        if self.geo.busy() {
+            self.geo.commit(open);
+        } else if self.geo.crop.active() {
+            self.notice = geometry::apply_crop(open, &self.geo.crop);
+            self.geo.crop.cancel();
+        } else {
+            self.sel.confirm(open);
+        }
     }
 
     /// Interpreta os eventos de ponteiro do quadro para a ferramenta atual.
@@ -288,7 +328,12 @@ impl ToolState {
         if foreign {
             self.active = None;
         }
+        if let Some(t) = self.geo.transform.as_mut() {
+            t.handle(open, out);
+            return;
+        }
         match self.tool {
+            Tool::Crop => self.geo.crop.handle(out),
             Tool::Marquee | Tool::Ellipse | Tool::Lasso | Tool::PolyLasso | Tool::Wand => {
                 self.sel.handle(self.tool, open, out)
             }
@@ -601,6 +646,9 @@ impl ToolState {
             ui.strong(self.tool.label());
             ui.separator();
             match self.tool {
+                Tool::Crop => {
+                    ui.label("Arraste a área; alças ajustam; Enter recorta (a área pode passar das bordas); Esc cancela. Camadas ficam recortadas à tela.");
+                }
                 Tool::Marquee | Tool::Ellipse | Tool::Lasso | Tool::PolyLasso | Tool::Wand => {
                     self.sel.options_ui(ui, self.tool)
                 }

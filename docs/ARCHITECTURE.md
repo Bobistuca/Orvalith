@@ -30,5 +30,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Seleções (Estágio 5)
 [selection.rs](../crates/orvalith-core/src/selection.rs): máscaras de 8 bits (255 = selecionado) com formas (retângulo, elipse, polígono), varinha, faixa de cores, morfologia (disco), pena, suavização, transformação e as operações `clear/fill/extract_selected`. O documento guarda `selection` e `channels` (com `Arc`); alterações passam por `edit::SelectionEdit` (histórico, sem sujar o documento nem reenviar a textura). Pincel, balde e gradiente recebem a máscara e misturam o resultado pixel a pixel. UI: [select.rs](../crates/orvalith/src/select.rs) (ferramentas e diálogos) e [selops.rs](../crates/orvalith/src/app/selops.rs) (cortar/copiar/preencher/máscara rápida). A máscara rápida é um documento cinza próprio, editado pelas mesmas ferramentas, com histórico separado até sair.
 
+## Geometria (Estágio 6)
+[transform.rs](../crates/orvalith-core/src/transform.rs): `Affine`, `Homography`, amostragem (vizinho/bilinear/bicúbica) em alfa pré-multiplicado, `warp*` (paralelo por linhas) e `resample` separável com filtro alargado ao reduzir. [docops.rs](../crates/orvalith-core/src/docops.rs): `DocState`/`DocEdit` (estado geométrico inteiro, pixels por `Arc`), recorte, tela, imagem, orientação, endireitar, alinhar/distribuir. [snap.rs](../crates/orvalith-core/src/snap.rs) e rotação em [view.rs](../crates/orvalith-core/src/view.rs). UI: [geometry.rs](../crates/orvalith/src/geometry.rs) (sessão de transformação com prévia viva, ferramenta de recorte, diálogos) e [canvas.rs](../crates/orvalith/src/canvas.rs) (réguas, guias, grade, malha de textura girável).
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).
