@@ -21,6 +21,9 @@ fmt, clippy, 112 testes e build release OK; smoke test abre/fecha. Manual: duas 
 ## Estágio 3 (2026-10-23)
 fmt, clippy, 70 testes e build release OK; smoke test abre/fecha. Manual: Ctrl+N → B (pincel): arrastar rápido em círculos, conferir ausência de lacunas e que Ctrl+Z desfaz o traço inteiro; [ e ] mudam o tamanho; E apaga; I amostra (Alt = fundo); G balde (Tolerância/Contíguo); Shift+G gradiente (Esc cancela durante o arrasto); X troca cores, D restaura; salvar preset e reiniciar o app; salvar `.orva`, reabrir e comparar a pintura; testar em zoom 25%, 100% e 800%.
 
+## Estágio 12.2 (2026-10-23)
+fmt, clippy -D warnings, 368 testes (núcleo 268 + app 98) e build release OK; smoke test: abre e fecha. Manual: Arquivo → Exportar PDF… (A4, vários documentos) e abrir o arquivo em um leitor de PDF externo; Arquivo → Importar PDF… com um PDF de várias páginas e um PDF com senha.
+
 ## Estágio 12.1 (2026-10-23)
 fmt, clippy -D warnings, 360 testes (núcleo 262 + app 98) e build release OK. Manual: Arquivo → Abrir um .webp/.gif/.bmp/.tif/.svg/.ora; Exportar: escolher cada formato, ver avisos e "Estimar tamanho"; lote para uma pasta (documentos, camadas, sprites). Sem rede: os formatos usam só bibliotecas locais.
 

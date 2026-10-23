@@ -60,5 +60,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Formatos (Estágio 12)
 [formats.rs](../crates/orvalith-core/src/formats.rs): `Format`, tabela `FORMATS` (a mesma da documentação), `detect` (por conteúdo; TGA só pela extensão), `import`/`export` (+`ExportOpts`, avisos), SVG (resvg), OpenRaster (zip), `sprite_sheet`. `imageio.rs` guarda os codecs raster (`image`) e o tratamento de perfil ICC/animação/HDR.
 
+## PDF (Estágio 12.2)
+[pdf.rs](../crates/orvalith-core/src/pdf.rs): leitura/rasterização com `hayro` (senha local), escrita raster com `pdf-writer` (`PdfSetup`, `layout`). UI: [app/pdfs.rs](../crates/orvalith/src/app/pdfs.rs).
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

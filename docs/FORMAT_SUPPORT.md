@@ -37,5 +37,13 @@ Formato, qualidade (JPEG), fundo (JPEG/PNM), lado máximo (miniaturas), perfil d
 
 O termo informal "MG" não identifica formato conhecido; nenhum decodificador `.mg` será inventado.
 
+## Estágio 12.2 — PDF totalmente local
+
+| Recurso | Leitura (importar) | Escrita (exportar) | Verificado por | Limitações |
+|---|---|---|---|---|
+| PDF | parcial | parcial | `pdf.rs` testes: PDF gerado relido por **leitores independentes** (lopdf conta páginas/MediaBox/imagens; hayro renderiza o conteúdo); PDF protegido (RC4 128 bits criado pelo lopdf) pede senha, recusa senha errada e abre com a correta; recorte, resolução, fundo, limite de tamanho | Leitura: o renderizador `hayro` (Rust puro) cobre a maioria dos PDFs mas não todos (sem blending/isolamento completos, sem recursos não interpretados); páginas viram **imagens raster** (texto/vetores não ficam editáveis); AES e RC4 40 bits não foram testados com arquivos reais; senha só em memória, nunca gravada. Escrita: **somente raster** (uma imagem por página, Flate com máscara de alfa ou JPEG); texto e vetores não são preservados; sem PDF/A, sem marcações |
+
+Importação: miniaturas, escolha de páginas, resolução (ppi), fundo (transparente/branco/cor), recorte em mm, tamanho físico informado. Exportação: vários documentos em um PDF multipágina; tamanho (da imagem, A3, A4, A5, Carta, Ofício, personalizado), orientação, margens, resolução efetiva exibida. Subconjunto "Photoshop PDF": **não suportado** (nenhum dado editável extra é preservado). Tudo local: nenhuma conta, sincronização ou conversão online.
+
 ## Subetapas seguintes
-12.2 PDF, 12.3 PSD/PSB e 12.4 `.pcraft`: ver as seções abaixo, atualizadas a cada subetapa.
+12.3 PSD/PSB e 12.4 `.pcraft`: ver as seções abaixo, atualizadas a cada subetapa.

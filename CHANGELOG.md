@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Estágio 12.2: PDF local — importar páginas rasterizadas (senha, resolução, fundo, recorte) e exportar PDF raster multipágina.
 - Estágio 12.1: WebP, GIF, BMP, TIFF, TGA, ICO, QOI, PNM, HDR, EXR, SVG (rasterizado) e OpenRaster; janela de exportação com formato, avisos, estimativa de tamanho, miniaturas e lote (documentos, camadas, sprites); tabela real em docs/FORMAT_SUPPORT.md.
 - Estágio 11.3: composições de camadas; `.orva` v10.
 - Estágio 11.2: objetos inteligentes (embutidos e vinculados) com transformação reversível, filtros inteligentes com máscara própria; `.orva` v9.

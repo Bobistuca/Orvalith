@@ -2,6 +2,7 @@
 
 mod geocmds;
 mod io;
+mod pdfs;
 mod selops;
 
 use std::path::PathBuf;
@@ -77,6 +78,8 @@ enum Action {
     Save,
     SaveAs,
     Export,
+    ImportPdf,
+    ExportPdf,
     Close,
     Undo,
     Redo,
@@ -109,6 +112,8 @@ pub struct OrvalithApp {
     active: usize,
     new_doc: Option<NewDocForm>,
     export: Option<ExportForm>,
+    pdf_import: Option<pdfs::PdfImport>,
+    pdf_export: Option<pdfs::PdfExport>,
     counter: u32,
     /// Mensagem (título, texto) para o usuário: erros, avisos e confirmações.
     message: Option<(String, String)>,
@@ -150,6 +155,8 @@ impl OrvalithApp {
             active: 0,
             new_doc: None,
             export: None,
+            pdf_import: None,
+            pdf_export: None,
             counter: 0,
             message: None,
             pending_close: None,
@@ -272,6 +279,15 @@ impl OrvalithApp {
                     });
                 }
             }
+            Action::ImportPdf => {
+                if let Some(p) = rfd::FileDialog::new()
+                    .add_filter("PDF", &["pdf"])
+                    .pick_file()
+                {
+                    self.start_pdf_import(p);
+                }
+            }
+            Action::ExportPdf => self.start_pdf_export(),
             Action::Close => self.request_close(self.active),
             Action::Layer(LayerCmd::RefineMask) => {
                 if let Some(o) = self.docs.get(self.active) {
@@ -577,6 +593,12 @@ impl eframe::App for OrvalithApp {
                     }
                     if item(ui, "Exportar imagem…", "Ctrl+Shift+E", has_doc) {
                         actions.push(Action::Export);
+                    }
+                    if item(ui, "Importar PDF…", "", true) {
+                        actions.push(Action::ImportPdf);
+                    }
+                    if item(ui, "Exportar PDF…", "", has_doc) {
+                        actions.push(Action::ExportPdf);
                     }
                     ui.separator();
                     if item(ui, "Fechar documento", "Ctrl+W", has_doc) {
@@ -1371,6 +1393,8 @@ impl OrvalithApp {
         }
 
         self.adjust_windows(ctx);
+        self.pdf_import_window(ctx);
+        self.pdf_export_window(ctx);
 
         if let Some(i) = self.pending_close {
             let name = self

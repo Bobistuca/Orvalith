@@ -11,3 +11,6 @@ repository = "https://github.com/Bobistuca/Orvalith"
 [profile.release]
 lto = "thin"
 codegen-units = 4
+
+[profile.dev.package."*"]
+opt-level = 2

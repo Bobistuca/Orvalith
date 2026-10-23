@@ -56,7 +56,7 @@ fn load_file(path: &Path) -> Result<Loaded, String> {
     }
 }
 
-fn with_extension(mut p: PathBuf, ext: &str) -> PathBuf {
+pub(super) fn with_extension(mut p: PathBuf, ext: &str) -> PathBuf {
     let has = p
         .extension()
         .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case(ext));
@@ -120,6 +120,13 @@ impl OrvalithApp {
     }
 
     pub(super) fn open_path(&mut self, path: PathBuf) {
+        if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+        {
+            self.start_pdf_import(path);
+            return;
+        }
         if let Some(i) = self
             .docs
             .iter()

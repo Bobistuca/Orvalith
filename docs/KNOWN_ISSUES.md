@@ -17,6 +17,7 @@
 - Malha de deformação: bordas externas sem suavização; os pontos de controle são fixos em 4×4.
 - Réguas desaparecem enquanto a visão está girada; o Mover não encaixa em guias.
 - A máscara de grupo não acompanha o conteúdo ao mover o grupo.
+- Estágio 12.2: PDF importado vira imagem (texto não editável); o renderizador não cobre 100% dos PDFs; exportação só raster; AES não testado com arquivos reais; a importação renderiza na thread da interface; o perfil de dev compila dependências com opt-level 2 (build inicial mais lento).
 - Estágio 12.1: WebP só grava sem perdas; GIF/ICO/TIFF/BMP limitados ao subconjunto do codec; HDR/EXR e 16 bits viram 8 bits; SVG/PDF não ficam vetoriais; OpenRaster não leva máscaras/estilos; AVIF/HEIC/JXL/JP2/RAW não suportados; sem impressão; a janela de exportação e o lote não foram exercitados com mouse.
 - Estágio 11.3: composições não guardam posição de camadas nem conteúdo; camadas criadas depois ficam como estão ao aplicar uma composição antiga.
 - Estágio 11.2: objetos inteligentes não aceitam Ctrl+T/pintura (use o painel ou Rasterizar); redimensionar a imagem, girar a tela e endireitar rasterizam o objeto (recortar e mover o mantêm); vínculos usam caminho absoluto; filtros inteligentes são recalculados na thread da interface; a máscara dos filtros não é pintável; sem objetos aninhados nem conteúdo PSD/PDF.

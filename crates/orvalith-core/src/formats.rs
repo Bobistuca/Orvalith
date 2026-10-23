@@ -81,7 +81,7 @@ pub const FORMATS: &[FormatInfo] = &[
     FormatInfo { format: Format::Ora, name: "OpenRaster", exts: &["ora"], read: Level::Partial, write: Level::Partial, note: "camadas, grupos, visibilidade, opacidade, modos básicos; sem máscaras, estilos ou ajustes" },
     FormatInfo { format: Format::Psd, name: "Photoshop PSD", exts: &["psd"], read: Level::No, write: Level::No, note: "subetapa 12.3" },
     FormatInfo { format: Format::Psb, name: "Photoshop PSB", exts: &["psb"], read: Level::No, write: Level::No, note: "subetapa 12.3" },
-    FormatInfo { format: Format::Pdf, name: "PDF", exts: &["pdf"], read: Level::No, write: Level::No, note: "subetapa 12.2" },
+    FormatInfo { format: Format::Pdf, name: "PDF", exts: &["pdf"], read: Level::Partial, write: Level::Partial, note: "importa páginas rasterizadas (Arquivo → Importar PDF) e exporta PDF raster multipágina (Arquivo → Exportar PDF); texto e vetores não ficam editáveis" },
 ];
 
 /// Extensões que não têm suporte e o motivo (aparece nas mensagens e na documentação).

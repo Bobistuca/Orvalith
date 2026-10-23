@@ -26,6 +26,7 @@ pub mod maskops;
 pub mod object;
 pub mod orva;
 pub mod paint;
+pub mod pdf;
 pub mod retouch;
 pub mod selection;
 pub mod snap;

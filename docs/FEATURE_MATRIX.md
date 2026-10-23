@@ -127,4 +127,6 @@ tags: [orvalith, matriz]
 | HDR/EXR (conversão para 8 bits com aviso), SVG (rasterizado com aviso), OpenRaster (camadas/grupos/opacidade/modos) | 12 | partial | `formats.rs` testes (SVG com alfa, ORA com contêiner válido, composição idêntica, arquivos hostis) | sem alto alcance dinâmico real; SVG não fica vetorial; ORA sem máscaras/estilos |
 | Exportação: formato, qualidade, fundo, lado máximo, perfil, avisos, estimativa de tamanho, lote (documentos, camadas, folha de sprites) | 12 | partial | `formats.rs` testes (avisos, miniaturas, sprites); janela não exercitada com mouse | sem impressão com dimensões físicas |
 | AVIF, HEIC/HEIF, JPEG XL, JPEG 2000, Camera RAW | 12 | planned | — | recusados com o motivo (dependências nativas/licenciamento); nenhum modelo de câmera testado |
-| Demais estágios (12.2–12.5 e 13–16) | 12–16 | planned | — | ver [[ROADMAP]] |
+| PDF: importar páginas (miniaturas, escolha, resolução, fundo, recorte, senha local) como imagens | 12 | partial | `pdf.rs` testes (renderização, recorte, fundo, limite, senha) | rasterizado: texto não editável; AES/RC4-40 sem arquivos de teste; renderizador não cobre todos os PDFs |
+| PDF: exportar PDF raster multipágina (tamanho, orientação, margens, resolução efetiva, Flate com alfa ou JPEG) | 12 | partial | `pdf.rs` testes com leitores independentes (lopdf e hayro) | sem texto/vetores preservados; sem PDF/A |
+| Demais estágios (12.3–12.5 e 13–16) | 12–16 | planned | — | ver [[ROADMAP]] |
