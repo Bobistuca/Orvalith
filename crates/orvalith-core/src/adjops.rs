@@ -60,6 +60,8 @@ pub fn destructive_blocked(l: &Layer) -> Option<&'static str> {
         Some("Selecione uma camada raster (não um grupo).")
     } else if l.adjustment.is_some() {
         Some("A camada ativa já é uma camada de ajuste; edite os parâmetros dela.")
+    } else if l.object.is_some() {
+        Some("Objeto inteligente: use filtros inteligentes ou Rasterizar antes de ajustar.")
     } else if l.source.is_some() {
         Some("Camada de texto/forma: use Camada → Rasterizar antes de ajustar.")
     } else if l.lock_pixels {

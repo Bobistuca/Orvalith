@@ -10,6 +10,7 @@ use std::sync::{Arc, OnceLock};
 use crate::adjust::Adjustment;
 use crate::blend::BlendMode;
 use crate::color::IccProfile;
+use crate::object::SmartObject;
 use crate::source::LayerSource;
 use crate::style::Effect;
 use crate::vector::ShapeSpec;
@@ -188,6 +189,8 @@ pub struct Layer {
     pub adjustment: Option<Adjustment>,
     /// Estilos de camada (sombras, brilhos, traço, sobreposições, chanfro).
     pub styles: Vec<Effect>,
+    /// Objeto inteligente (original preservado, transformação e filtros editáveis).
+    pub object: Option<SmartObject>,
     pub width: u32,
     pub height: u32,
     pub pixels: Arc<Vec<u8>>,
@@ -230,6 +233,7 @@ impl Layer {
             source: None,
             adjustment: None,
             styles: Vec::new(),
+            object: None,
             width,
             height,
             pixels: Arc::new(pixels),
@@ -250,6 +254,12 @@ impl Layer {
 
     /// Regera os pixels a partir da origem editável (tamanho do documento `w × h`).
     pub fn rerender(&mut self, w: u32, h: u32) {
+        if let Some(px) = self.object.as_ref().and_then(|o| o.render(w, h)) {
+            self.pixels = Arc::new(px);
+            self.width = w;
+            self.height = h;
+            return;
+        }
         if let Some(src) = &self.source {
             self.pixels = Arc::new(src.render(w, h));
             self.width = w;

@@ -36,6 +36,12 @@ pub enum LayerCmd {
     ToggleClip,
     ToggleMaskView,
     Rasterize,
+    ToObject,
+    EmbedObject,
+    UpdateLink,
+    RelinkObject,
+    FilterMaskFromSelection,
+    FilterMaskClear,
     NewFill(usize),
     Boolean(BoolOp),
     VectorMask,
@@ -71,7 +77,7 @@ impl OpenDoc {
         );
     }
 
-    fn apply_outcome(&mut self, label: &str, o: Outcome) {
+    pub(crate) fn apply_outcome(&mut self, label: &str, o: Outcome) {
         let before = self.doc.layers.clone();
         self.history.execute(
             &mut self.doc,
@@ -203,6 +209,47 @@ pub fn run(
                 },
                 |ls| ls[idx].clipped = !clipped,
             );
+        }
+        LayerCmd::ToObject => {
+            let Some(id) = active else { return nothing() };
+            match orvalith_core::object::convert_to_object(&open.doc, id) {
+                Ok(layers) => {
+                    open.edit_layers("Converter em objeto inteligente", |ls| *ls = layers)
+                }
+                Err(e) => return Some(e),
+            }
+        }
+        LayerCmd::EmbedObject
+        | LayerCmd::UpdateLink
+        | LayerCmd::FilterMaskFromSelection
+        | LayerCmd::FilterMaskClear => {
+            let Some(id) = active else { return nothing() };
+            let (label, res) = match cmd {
+                LayerCmd::EmbedObject => (
+                    "Embutir objeto",
+                    orvalith_core::object::embed(&open.doc, id),
+                ),
+                LayerCmd::UpdateLink => (
+                    "Atualizar vínculo",
+                    orvalith_core::object::update_link(&open.doc, id),
+                ),
+                LayerCmd::FilterMaskFromSelection => (
+                    "Máscara dos filtros",
+                    orvalith_core::object::set_filter_mask(&open.doc, id, true),
+                ),
+                _ => (
+                    "Remover máscara dos filtros",
+                    orvalith_core::object::set_filter_mask(&open.doc, id, false),
+                ),
+            };
+            match res {
+                Ok(layers) => open.edit_layers(label, |ls| *ls = layers),
+                Err(e) => return Some(e),
+            }
+        }
+        LayerCmd::RelinkObject => {
+            // O diálogo de arquivo é aberto pelo aplicativo (ver Action::RelinkObject).
+            return Some("Escolha o arquivo no diálogo.".into());
         }
         LayerCmd::NewFill(kind) => {
             let above = active;
@@ -392,6 +439,7 @@ fn end_prop_drag(open: &mut OpenDoc) {
                 || a.source != b.source
                 || a.adjustment != b.adjustment
                 || a.styles != b.styles
+                || a.object != b.object
         });
         if changed {
             let after = open.doc.layers.clone();
@@ -515,6 +563,24 @@ fn props_ui(ui: &mut egui::Ui, open: &mut OpenDoc) -> Vec<LayerCmd> {
             .clicked()
         {
             cmds.push(LayerCmd::Rasterize);
+        }
+    }
+    // ---- Objeto inteligente ----
+    if let Some(obj) = open.doc.layers[idx].object.clone() {
+        ui.separator();
+        let mut o = obj;
+        let mut st = std::mem::take(&mut open.obj_ui);
+        let (changed, extra) = crate::objectui::object_ui(ui, &mut o, &mut st);
+        open.obj_ui = st;
+        cmds.extend(extra);
+        if changed {
+            begin_prop_drag(open, "Editar objeto inteligente");
+            o.sanitize();
+            let (w, h) = (open.doc.width, open.doc.height);
+            let l = &mut open.doc.layers[idx];
+            l.object = Some(o);
+            l.rerender(w, h);
+            open.doc.touch();
         }
     }
     // ---- Camada de preenchimento ----
@@ -748,6 +814,7 @@ fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) -> Vec<LayerCmd> {
                 Some(orvalith_core::LayerSource::Text(_)) => "T ",
                 Some(orvalith_core::LayerSource::Shape(_)) => "F ",
                 Some(orvalith_core::LayerSource::Fill(_)) => "P ",
+                None if l.object.is_some() => "O ",
                 None if l.adjustment.is_some() => "A ",
                 None if !l.styles.is_empty() => "fx ",
                 None => "",
@@ -1400,5 +1467,39 @@ mod tests {
         o.history.undo(&mut o.doc);
         assert!(o.doc.layers[0].styles.is_empty());
         let _ = id;
+    }
+    #[test]
+    fn smart_object_commands_and_edits_are_undoable() {
+        let mut o = open_with_two();
+        let top = o.doc.layers.len() - 1;
+        o.doc.layers[top].set_pixel(1, 1, [200, 10, 10, 255]);
+        o.doc.layers[top].set_pixel(2, 1, [10, 200, 10, 255]);
+        let before_px = o.doc.layers[top].pixels.clone();
+        assert!(run1(&mut o, LayerCmd::ToObject).is_none());
+        assert!(o.doc.layers[top].object.is_some());
+        assert_eq!(o.doc.layers[top].pixels, before_px, "aparência idêntica");
+        // Editar a transformação como no painel: uma ação; desfazer volta.
+        let n = o.history.labels().len();
+        begin_prop_drag(&mut o, "Editar objeto inteligente");
+        let (w, h) = (o.doc.width, o.doc.height);
+        o.doc.layers[top]
+            .object
+            .as_mut()
+            .unwrap()
+            .translate(1.0, 0.0);
+        o.doc.layers[top].rerender(w, h);
+        o.doc.touch();
+        end_prop_drag(&mut o);
+        assert_eq!(o.history.labels().len(), n + 1);
+        assert_eq!(o.doc.layers[top].pixel(2, 1), Some([200, 10, 10, 255]));
+        o.history.undo(&mut o.doc);
+        assert_eq!(o.doc.layers[top].pixels, before_px);
+        // Rasterizar remove o objeto.
+        assert!(run1(&mut o, LayerCmd::Rasterize).is_none());
+        assert!(o.doc.layers[top].object.is_none());
+        assert!(
+            run1(&mut o, LayerCmd::EmbedObject).is_some(),
+            "sem objeto: aviso"
+        );
     }
 }

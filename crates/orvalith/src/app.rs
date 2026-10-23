@@ -75,6 +75,7 @@ enum Action {
     FilterStart(usize),
     AdjLayer(usize),
     ToggleHist,
+    PlaceObject(bool),
     ColorDlg,
 }
 
@@ -260,6 +261,7 @@ impl OrvalithApp {
                     self.flatten_prompt = true;
                 }
             }
+            Action::Layer(LayerCmd::RelinkObject) => self.relink_object(),
             Action::Layer(cmd) => {
                 if self.tools.is_busy() {
                     return;
@@ -302,6 +304,7 @@ impl OrvalithApp {
                 }
             }
             Action::ToggleHist => self.hist.open = !self.hist.open,
+            Action::PlaceObject(linked) => self.place_object(linked),
             Action::ColorDlg => self.color_dlg.open = !self.color_dlg.open,
             Action::Select(c) => self.run_select(c),
             Action::CopySel(cut) => self.copy_cut(cut),
@@ -679,6 +682,34 @@ impl eframe::App for OrvalithApp {
                             ui.close();
                         }
                     }
+                });
+                ui.menu_button("Objetos", |ui| {
+                    if ui
+                        .add_enabled(
+                            has_doc,
+                            egui::Button::new("Converter camada em objeto inteligente"),
+                        )
+                        .clicked()
+                    {
+                        actions.push(Action::Layer(LayerCmd::ToObject));
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_doc, egui::Button::new("Colocar imagem (embutida)…"))
+                        .clicked()
+                    {
+                        actions.push(Action::PlaceObject(false));
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_doc, egui::Button::new("Colocar imagem vinculada…"))
+                        .clicked()
+                    {
+                        actions.push(Action::PlaceObject(true));
+                        ui.close();
+                    }
+                    ui.separator();
+                    ui.small("Transformação e filtros do objeto ficam no painel da camada.");
                 });
                 ui.menu_button("Preenchimento", |ui| {
                     for (i, n) in orvalith_core::source::FILL_KINDS.iter().enumerate() {
@@ -1586,6 +1617,64 @@ impl OrvalithApp {
         }
         if let Some(m) = msg {
             self.show_message("Perfil de cor", m);
+        }
+    }
+}
+
+impl OrvalithApp {
+    /// Coloca uma imagem PNG/JPEG como objeto inteligente (embutido ou vinculado).
+    fn place_object(&mut self, linked: bool) {
+        if self.tools.is_busy() || self.docs.is_empty() {
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Imagens", &["png", "jpg", "jpeg", "jpe", "jfif"])
+            .pick_file()
+        else {
+            return;
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                return self
+                    .show_message("Erro ao ler a imagem", format!("{}\n\n{e}", path.display()))
+            }
+        };
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Objeto".into());
+        let link = linked.then(|| path.to_string_lossy().into_owned());
+        let Some(open) = self.docs.get_mut(self.active) else {
+            return;
+        };
+        let above = open.active_idx().map(|i| open.doc.layers[i].id);
+        match orvalith_core::object::place_image(&open.doc, &bytes, &name, link, above) {
+            Ok(o) => open.apply_outcome("Colocar objeto inteligente", o),
+            Err(e) => self.show_message("Erro ao colocar a imagem", e),
+        }
+    }
+
+    /// Escolhe o arquivo para (re)vincular o objeto da camada ativa.
+    fn relink_object(&mut self) {
+        if self.tools.is_busy() {
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Imagens", &["png", "jpg", "jpeg", "jpe", "jfif"])
+            .pick_file()
+        else {
+            return;
+        };
+        let Some(open) = self.docs.get_mut(self.active) else {
+            return;
+        };
+        let Some(id) = open.active_idx().map(|i| open.doc.layers[i].id) else {
+            return;
+        };
+        match orvalith_core::object::relink(&open.doc, id, &path.to_string_lossy()) {
+            Ok(layers) => open.edit_layers("Reencontrar vínculo", |ls| *ls = layers),
+            Err(e) => self.show_message("Erro ao vincular", e),
         }
     }
 }

@@ -21,6 +21,7 @@ pub mod imageio;
 pub mod layerops;
 pub mod liquify;
 pub mod maskops;
+pub mod object;
 pub mod orva;
 pub mod paint;
 pub mod retouch;

@@ -227,6 +227,8 @@ pub(crate) fn paint_blocked(l: &Layer) -> Option<String> {
         Some("Selecione uma camada raster (não um grupo) para pintar.".into())
     } else if l.adjustment.is_some() {
         Some("Camada de ajuste: não recebe pintura (use a máscara dela).".into())
+    } else if l.object.is_some() {
+        Some("Objeto inteligente: use Camada → Rasterizar antes de pintar.".into())
     } else if l.source.is_some() {
         Some("Camada de texto/forma: use Camada → Rasterizar antes de pintar.".into())
     } else if !l.visible {
@@ -550,12 +552,11 @@ impl ToolState {
                         else {
                             continue;
                         };
-                        if orig.source.is_some() {
-                            cur.source = orig.source.clone();
-                            orvalith_core::vecops::translate_source(
-                                cur, d.0 as f32, d.1 as f32, open_w, open_h,
-                            );
-                        } else {
+                        cur.source = orig.source.clone();
+                        cur.object = orig.object.clone();
+                        if !orvalith_core::vecops::translate_content(
+                            cur, d.0 as f32, d.1 as f32, open_w, open_h,
+                        ) {
                             cur.pixels = Arc::new(layerops::shifted_pixels(orig, d.0, d.1));
                         }
                         if let (Some(cm), Some(om)) = (cur.mask.as_mut(), orig.mask.as_ref()) {

@@ -130,10 +130,11 @@ impl TransformSession {
             .into_iter()
             .filter(|id| open.doc.layer(*id).is_some_and(|l| !l.lock_position))
             .collect();
-        if movable_rasters(&open.doc, &ids)
-            .iter()
-            .any(|id| open.doc.layer(*id).is_some_and(|l| l.source.is_some()))
-        {
+        if movable_rasters(&open.doc, &ids).iter().any(|id| {
+            open.doc
+                .layer(*id)
+                .is_some_and(|l| l.source.is_some() || l.object.is_some())
+        }) {
             return Err(
                 "Camadas de texto/forma: use Camada → Rasterizar antes de transformar.".into(),
             );

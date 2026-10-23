@@ -122,7 +122,9 @@ impl OrvalithApp {
         match load_file(&path) {
             Ok(l) => {
                 let missing = orvalith_core::vecops::missing_fonts(&l.doc);
-                let mut open = OpenDoc::new(l.doc);
+                let mut doc = l.doc;
+                let link_warnings = orvalith_core::object::resolve_links(&mut doc);
+                let mut open = OpenDoc::new(doc);
                 if l.project {
                     open.path = Some(path.clone());
                 }
@@ -132,6 +134,9 @@ impl OrvalithApp {
                 self.prefs.save();
                 if !l.warnings.is_empty() {
                     self.show_message("Aviso de importação", l.warnings.join("\n"));
+                }
+                if !link_warnings.is_empty() {
+                    self.show_message("Objetos vinculados", link_warnings.join("\n\n"));
                 }
                 if !missing.is_empty() {
                     self.show_message(

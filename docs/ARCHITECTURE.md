@@ -51,5 +51,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Estilos e preenchimentos (Estágio 11.1)
 [style.rs](../crates/orvalith-core/src/style.rs): `Effect`/`EffectKind`, padrões e `apply` (conteúdo + efeitos numa região com margem). `compose.rs::blend_styled` monta o conteúdo (máscara e preenchimento no alfa), aplica os efeitos e mescla com o modo/opacidade da camada; a margem (`style::reach`) garante que renderizações parciais coincidam com a completa. `LayerSource::Fill(FillSpec)` ([source.rs](../crates/orvalith-core/src/source.rs)) dá as camadas de preenchimento. UI: [styleui.rs](../crates/orvalith/src/styleui.rs).
 
+## Objetos inteligentes (Estágio 11.2)
+[object.rs](../crates/orvalith-core/src/object.rs): `SmartObject` (original + centro/escala/giro + filtros + máscara) renderiza sempre a partir do original (filtros no espaço do original, depois transformação bilinear em alfa pré-multiplicado). `Layer.object` + `Layer::rerender` mantêm os pixels da camada; `vecops::translate_content` move texto/forma/objeto sem perda. UI: [objectui.rs](../crates/orvalith/src/objectui.rs); diálogos de arquivo em `app.rs`.
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

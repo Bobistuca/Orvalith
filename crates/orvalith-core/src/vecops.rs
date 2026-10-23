@@ -64,10 +64,29 @@ pub fn rasterize(doc: &Document, id: LayerId) -> Result<Vec<Layer>, String> {
         .iter_mut()
         .find(|l| l.id == id)
         .ok_or("Camada não encontrada.")?;
-    if l.source.take().is_none() {
+    let had_object = l.object.take().is_some();
+    if l.source.take().is_none() && !had_object {
         return Err("A camada já é raster.".into());
     }
     Ok(layers)
+}
+
+/// Move o conteúdo editável (origem de texto/forma ou objeto inteligente) sem perda.
+/// Devolve `false` quando a camada não tem como re-renderizar (o chamador move os pixels).
+pub fn translate_content(layer: &mut Layer, dx: f32, dy: f32, w: u32, h: u32) -> bool {
+    if let Some(o) = layer.object.as_mut() {
+        o.translate(dx, dy);
+        if o.is_missing() {
+            return false;
+        }
+        layer.rerender(w, h);
+        return true;
+    }
+    if layer.source.is_some() {
+        translate_source(layer, dx, dy, w, h);
+        return true;
+    }
+    false
 }
 
 /// Move a origem editável (sem perda: a camada é re-renderizada na nova posição).

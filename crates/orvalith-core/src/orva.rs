@@ -19,12 +19,13 @@ use crate::blend::BlendMode;
 use crate::color::{IccProfile, MAX_PROFILE_BYTES};
 use crate::document::{Channel, Document, Guide, Layer, LayerId, LayerKind, LayerMask};
 use crate::layerops::normalize;
+use crate::object::{link_allowed, SmartFilter, SmartObject, MAX_FILTERS};
 use crate::source::{shape_sane, LayerSource};
 use crate::style::{effects_sane, Effect};
 use crate::vector::ShapeSpec;
 
 pub const MAGIC: &[u8; 8] = b"ORVALITH";
-pub const CURRENT_VERSION: u32 = 8;
+pub const CURRENT_VERSION: u32 = 9;
 const MAX_CHANNELS: usize = 256;
 const HEADER_LEN: usize = 20;
 const MAX_MANIFEST: usize = 64 * 1024 * 1024;
@@ -150,6 +151,38 @@ struct LayerEntry {
     /// Versão 8: estilos de camada (JSON lido de forma tolerante).
     #[serde(default)]
     styles: Option<serde_json::Value>,
+    /// Versão 9: objeto inteligente.
+    #[serde(default)]
+    object: Option<ObjectEntry>,
+}
+
+/// Recurso zlib dentro do blob.
+#[derive(Serialize, Deserialize)]
+struct BlobRes {
+    offset: u64,
+    stored_len: u64,
+    raw_len: u64,
+    crc32: u32,
+}
+
+/// Objeto inteligente (versão 9). Objetos vinculados não gravam o original (só o caminho).
+#[derive(Serialize, Deserialize)]
+struct ObjectEntry {
+    orig_w: u32,
+    orig_h: u32,
+    cx: f32,
+    cy: f32,
+    sx: f32,
+    sy: f32,
+    rot: f32,
+    #[serde(default)]
+    link: Option<String>,
+    #[serde(default)]
+    data: Option<BlobRes>,
+    #[serde(default)]
+    filters: Vec<serde_json::Value>,
+    #[serde(default)]
+    mask: Option<BlobRes>,
 }
 
 /// Máscara de camada (versão 5): recurso zlib de 1 byte por pixel do documento.
@@ -240,8 +273,47 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
             styles: (!l.styles.is_empty())
                 .then(|| serde_json::to_value(&l.styles).ok())
                 .flatten(),
+            object: None,
         });
         blob.extend_from_slice(&packed);
+        if let Some(o) = &l.object {
+            let res = |bytes: &[u8], blob: &mut Vec<u8>| -> Result<BlobRes, OrvaError> {
+                let (offset, stored_len, crc32) = pack(bytes, blob)?;
+                Ok(BlobRes {
+                    offset,
+                    stored_len,
+                    raw_len: bytes.len() as u64,
+                    crc32,
+                })
+            };
+            let data = match (&o.link, &o.pixels) {
+                (None, Some(px)) => Some(res(px, &mut blob)?),
+                _ => None,
+            };
+            let mask = match &o.mask {
+                Some(m) => Some(res(m, &mut blob)?),
+                None => None,
+            };
+            if let Some(last) = entries.last_mut() {
+                last.object = Some(ObjectEntry {
+                    orig_w: o.orig_w,
+                    orig_h: o.orig_h,
+                    cx: o.cx,
+                    cy: o.cy,
+                    sx: o.sx,
+                    sy: o.sy,
+                    rot: o.rot,
+                    link: o.link.clone(),
+                    data,
+                    filters: o
+                        .filters
+                        .iter()
+                        .filter_map(|f| serde_json::to_value(f).ok())
+                        .collect(),
+                    mask,
+                });
+            }
+        }
         if let Some(m) = &l.mask {
             let (offset, stored_len, crc32) = pack(m.data(), &mut blob)?;
             if let Some(last) = entries.last_mut() {
@@ -318,6 +390,68 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
     out.extend_from_slice(&json);
     out.extend_from_slice(&blob);
     Ok(out)
+}
+
+fn unpack(res: &BlobRes, blob: &[u8], what: &str) -> Result<Vec<u8>, OrvaError> {
+    let packed = &blob[res.offset as usize..(res.offset + res.stored_len) as usize];
+    let mut data = Vec::with_capacity(res.raw_len as usize);
+    ZlibDecoder::new(packed)
+        .take(res.raw_len + 1)
+        .read_to_end(&mut data)
+        .map_err(|err| OrvaError::Corrupt(format!("{what}: {err}")))?;
+    if data.len() as u64 != res.raw_len || crc32fast::hash(&data) != res.crc32 {
+        return Err(OrvaError::Corrupt(what.to_string()));
+    }
+    Ok(data)
+}
+
+/// Lê um objeto inteligente; entradas sem original nem vínculo válido são ignoradas.
+fn decode_object(
+    oe: &ObjectEntry,
+    blob: &[u8],
+    name: &str,
+) -> Result<Option<SmartObject>, OrvaError> {
+    let link = oe.link.clone().filter(|l| link_allowed(l));
+    let pixels = match &oe.data {
+        Some(r) => Some(std::sync::Arc::new(unpack(
+            r,
+            blob,
+            &format!("objeto de \"{name}\""),
+        )?)),
+        None => None,
+    };
+    if pixels.is_none() && link.is_none() {
+        return Ok(None);
+    }
+    let mask = match &oe.mask {
+        Some(r) => Some(std::sync::Arc::new(unpack(
+            r,
+            blob,
+            &format!("máscara do objeto de \"{name}\""),
+        )?)),
+        None => None,
+    };
+    let filters: Vec<SmartFilter> = oe
+        .filters
+        .iter()
+        .filter_map(|v| serde_json::from_value::<SmartFilter>(v.clone()).ok())
+        .take(MAX_FILTERS)
+        .collect();
+    let mut o = SmartObject {
+        orig_w: oe.orig_w,
+        orig_h: oe.orig_h,
+        pixels,
+        link,
+        cx: oe.cx,
+        cy: oe.cy,
+        sx: oe.sx,
+        sy: oe.sy,
+        rot: oe.rot,
+        filters,
+        mask,
+    };
+    o.sanitize();
+    Ok(Some(o))
 }
 
 fn u32_at(b: &[u8], at: usize) -> u32 {
@@ -440,6 +574,31 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         if !e.opacity.is_finite() || !e.fill.is_finite() {
             return Err(OrvaError::Corrupt("opacidade inválida".into()));
         }
+        if let Some(oe) = &e.object {
+            if !side_ok(oe.orig_w) || !side_ok(oe.orig_h) {
+                return Err(OrvaError::Corrupt(format!(
+                    "dimensões do objeto de \"{}\"",
+                    e.name
+                )));
+            }
+            let obj_len = u64::from(oe.orig_w) * u64::from(oe.orig_h) * 4;
+            for (res, expect) in [(oe.data.as_ref(), obj_len), (oe.mask.as_ref(), channel_len)] {
+                let Some(r) = res else { continue };
+                if r.raw_len != expect
+                    || r.offset
+                        .checked_add(r.stored_len)
+                        .is_none_or(|end| end > blob.len() as u64)
+                {
+                    return Err(OrvaError::Corrupt(format!("objeto de \"{}\"", e.name)));
+                }
+                total = total.saturating_add(r.raw_len);
+                if total > MAX_TOTAL_PIXEL_BYTES {
+                    return Err(OrvaError::TooLarge(
+                        "objetos e camadas grandes demais".into(),
+                    ));
+                }
+            }
+        }
         if let Some(me) = &e.mask {
             if me.raw_len != channel_len {
                 return Err(OrvaError::Corrupt(format!(
@@ -535,6 +694,13 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
             .and_then(|v| serde_json::from_value::<Vec<Effect>>(v.clone()).ok())
             .filter(|v| effects_sane(v))
             .unwrap_or_default();
+        if let Some(oe) = &e.object {
+            layer.object = decode_object(oe, blob, &e.name)?;
+            if layer.object.is_some() {
+                layer.source = None;
+                layer.adjustment = None;
+            }
+        }
         if let Some(me) = &e.mask {
             let packed = &blob[me.offset as usize..(me.offset + me.stored_len) as usize];
             let mut data = Vec::with_capacity(me.raw_len as usize);
@@ -987,5 +1153,97 @@ mod tests {
         out.extend_from_slice(bad.as_bytes());
         out.extend_from_slice(&bytes[HEADER_LEN + man_len..]);
         assert!(read(&out).unwrap().layers[1].styles.is_empty());
+    }
+    fn object_doc() -> Document {
+        use crate::filter::Filter;
+        use crate::object::{convert_to_object, SmartFilter};
+        let mut d = Document::new("o", 24, 16, Some([255, 255, 255, 255])).unwrap();
+        let mut l = Layer::transparent("img", 24, 16);
+        for y in 4..12 {
+            for x in 6..18 {
+                l.set_pixel(x, y, [(x * 10) as u8, (y * 10) as u8, 40, 255]);
+            }
+        }
+        d.layers.push(l);
+        let id = d.layers[1].id;
+        d.layers = convert_to_object(&d, id).unwrap();
+        let (w, h) = (d.width, d.height);
+        let o = d.layers[1].object.as_mut().unwrap();
+        o.sx = 1.5;
+        o.rot = 20.0;
+        o.filters.push(SmartFilter {
+            enabled: true,
+            filter: Filter::Pixelate { size: 3 },
+        });
+        o.mask = Some(std::sync::Arc::new(vec![255u8; (w * h) as usize]));
+        d.layers[1].rerender(w, h);
+        d
+    }
+
+    fn patch_manifest(bytes: &[u8], from: &str, to: &str) -> Vec<u8> {
+        let man_len = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        let man = String::from_utf8(bytes[HEADER_LEN..HEADER_LEN + man_len].to_vec()).unwrap();
+        let bad = man.replacen(from, to, 1);
+        assert_ne!(bad, man, "{from}");
+        let mut out = bytes[..12].to_vec();
+        out.extend_from_slice(&(bad.len() as u32).to_le_bytes());
+        out.extend_from_slice(&crc32fast::hash(bad.as_bytes()).to_le_bytes());
+        out.extend_from_slice(bad.as_bytes());
+        out.extend_from_slice(&bytes[HEADER_LEN + man_len..]);
+        out
+    }
+
+    #[test]
+    fn embedded_objects_roundtrip_keep_editing_state_and_reopen_editable() {
+        let d = object_doc();
+        let back = read(&write(&d).unwrap()).unwrap();
+        let (a, b) = (
+            d.layers[1].object.as_ref().unwrap(),
+            back.layers[1].object.as_ref().unwrap(),
+        );
+        assert_eq!(
+            a, b,
+            "original, transformação, filtros e máscara preservados"
+        );
+        assert_eq!(back.layers[1].pixels, d.layers[1].pixels);
+        // Editável depois de reabrir: mudar um parâmetro e voltar reproduz o original.
+        let mut again = back;
+        let (w, h) = (again.width, again.height);
+        let before = again.layers[1].pixels.clone();
+        again.layers[1].object.as_mut().unwrap().sx = 3.0;
+        again.layers[1].rerender(w, h);
+        assert_ne!(again.layers[1].pixels, before);
+        again.layers[1].object.as_mut().unwrap().sx = 1.5;
+        again.layers[1].rerender(w, h);
+        assert_eq!(again.layers[1].pixels, before);
+    }
+
+    #[test]
+    fn linked_objects_store_no_original_and_hostile_objects_are_handled() {
+        let mut d = object_doc();
+        d.layers[1].object.as_mut().unwrap().link = Some("C:\\fotos\\a.png".into());
+        let bytes = write(&d).unwrap();
+        let back = read(&bytes).unwrap();
+        let o = back.layers[1].object.as_ref().unwrap();
+        assert!(
+            o.is_linked() && o.is_missing(),
+            "vinculado: o original não é gravado"
+        );
+        assert_eq!(
+            back.layers[1].pixels, d.layers[1].pixels,
+            "aparência gravada mantida"
+        );
+        // Vínculo de rede sem original: o objeto é descartado e a camada fica raster.
+        let net = patch_manifest(&bytes, "C:\\\\fotos\\\\a.png", "\\\\\\\\srv\\\\x.png");
+        assert!(read(&net).unwrap().layers[1].object.is_none());
+        // Dimensões absurdas com dados minúsculos: recusado antes de alocar.
+        let embedded = write(&object_doc()).unwrap();
+        let bomb = patch_manifest(&embedded, "\"orig_w\":12", "\"orig_w\":32000");
+        assert!(read(&bomb).is_err());
+        // Corrupção do original embutido é detectada.
+        let mut broken = write(&object_doc()).unwrap();
+        let last = broken.len() - 1;
+        broken[last] ^= 0x55;
+        assert!(read(&broken).is_err());
     }
 }

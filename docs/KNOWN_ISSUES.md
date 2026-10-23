@@ -17,6 +17,7 @@
 - Malha de deformação: bordas externas sem suavização; os pontos de controle são fixos em 4×4.
 - Réguas desaparecem enquanto a visão está girada; o Mover não encaixa em guias.
 - A máscara de grupo não acompanha o conteúdo ao mover o grupo.
+- Estágio 11.2: objetos inteligentes não aceitam Ctrl+T/pintura (use o painel ou Rasterizar); redimensionar a imagem, girar a tela e endireitar rasterizam o objeto (recortar e mover o mantêm); vínculos usam caminho absoluto; filtros inteligentes são recalculados na thread da interface; a máscara dos filtros não é pintável; sem objetos aninhados nem conteúdo PSD/PDF.
 - Estágio 11.1: estilos não valem em grupos nem em camadas recortadas (a base de um recorte ignora os próprios estilos); camadas com gradiente por sobreposição varrem a camada inteira a cada render parcial (lento em 4K); o painel de camada ficou ainda mais longo; efeitos e predefinições não foram exercitados com mouse.
 - Estágio 10.2: o Liquify só tem deformar/suavizar/reconstruir (sem inchar, contrair, congelar); o resultado é recalculado do original a cada toque na região (não medido em 4K); durante a sessão outras operações ficam bloqueadas até Enter/Esc.
 - Estágio 10.1: filtros usam `f32` pré-multiplicado (em 4K ≈ 270 MiB por buffer) e rodam numa thread, mas sem tiles; mediana e movimento são lentos com raios grandes; ferramentas de retoque agem só nos pixels da camada ativa (não na máscara) e não foram exercitadas com mouse real; correção pontual/remendo não sintetizam textura nova; sem inpainting.

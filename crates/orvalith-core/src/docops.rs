@@ -160,11 +160,8 @@ pub fn reframe(
         if l.is_group() {
             continue;
         }
-        if l.source.is_some() {
-            crate::vecops::translate_source(l, ox as f32, oy as f32, nw, nh);
-            if l.source.is_some() {
-                continue;
-            }
+        if crate::vecops::translate_content(l, ox as f32, oy as f32, nw, nh) {
+            continue;
         }
         let fill = if Some(i) == bottom {
             fill_bottom.unwrap_or([0; 4])
@@ -254,6 +251,7 @@ pub fn resize_image(
     }
     for l in st.layers.iter_mut().filter(|l| !l.is_group()) {
         l.source = None; // reamostrado: a origem vetorial não vale mais
+        l.object = None;
         let px = transform::resample(&l.pixels, l.width, l.height, nw, nh, interp);
         l.pixels = std::sync::Arc::new(px);
         l.width = nw;
@@ -336,6 +334,7 @@ pub fn orient_canvas(doc: &Document, o: Orient) -> Result<DocState, String> {
     st.height = nh;
     for l in st.layers.iter_mut().filter(|l| !l.is_group()) {
         l.source = None;
+        l.object = None;
         l.pixels = std::sync::Arc::new(orient_buf(&l.pixels, l.width, l.height, 4, o));
         l.width = nw;
         l.height = nh;
@@ -433,6 +432,7 @@ pub fn straighten(doc: &Document, angle_deg: f32, interp: Interp) -> Result<DocS
     st.height = nh;
     for l in st.layers.iter_mut().filter(|l| !l.is_group()) {
         l.source = None;
+        l.object = None;
         let px = transform::warp_affine(&l.pixels, l.width, l.height, &m, nw, nh, interp)
             .ok_or("Ângulo inválido.")?;
         l.pixels = std::sync::Arc::new(px);
@@ -525,10 +525,8 @@ fn shift_node(layers: &mut [Layer], doc: &Document, id: LayerId, dx: i32, dy: i3
     for r in movable_rasters(doc, &[id]) {
         if let Some(l) = layers.iter_mut().find(|l| l.id == r) {
             if !l.lock_position {
-                if l.source.is_some() {
-                    let (w, h) = (l.width, l.height);
-                    crate::vecops::translate_source(l, dx as f32, dy as f32, w, h);
-                } else {
+                let (w, h) = (l.width, l.height);
+                if !crate::vecops::translate_content(l, dx as f32, dy as f32, w, h) {
                     l.pixels = std::sync::Arc::new(shifted_pixels(l, dx, dy));
                 }
                 if let Some(m) = l.mask.as_mut().filter(|m| m.linked) {
