@@ -11,6 +11,7 @@ use crate::adjust::Adjustment;
 use crate::blend::BlendMode;
 use crate::color::IccProfile;
 use crate::source::LayerSource;
+use crate::style::Effect;
 use crate::vector::ShapeSpec;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -185,6 +186,8 @@ pub struct Layer {
     pub source: Option<LayerSource>,
     /// Camada de ajuste não destrutivo: age sobre o que está abaixo (os pixels ficam transparentes).
     pub adjustment: Option<Adjustment>,
+    /// Estilos de camada (sombras, brilhos, traço, sobreposições, chanfro).
+    pub styles: Vec<Effect>,
     pub width: u32,
     pub height: u32,
     pub pixels: Arc<Vec<u8>>,
@@ -226,6 +229,7 @@ impl Layer {
             clipped: false,
             source: None,
             adjustment: None,
+            styles: Vec::new(),
             width,
             height,
             pixels: Arc::new(pixels),

@@ -117,6 +117,7 @@ impl OrvalithApp {
         let (autosave_tx, autosave_rx) = mpsc::channel();
         let recovery_found = io::scan_recovery(prefs.recovery_path());
         let tools = ToolState::new(prefs.brush, prefs.fg, prefs.bg);
+        crate::styleui::load_presets(prefs.style_presets.clone());
         Self {
             docs: Vec::new(),
             active: 0,
@@ -678,6 +679,19 @@ impl eframe::App for OrvalithApp {
                             ui.close();
                         }
                     }
+                });
+                ui.menu_button("Preenchimento", |ui| {
+                    for (i, n) in orvalith_core::source::FILL_KINDS.iter().enumerate() {
+                        if ui
+                            .add_enabled(has_doc, egui::Button::new(format!("Nova camada: {n}")))
+                            .clicked()
+                        {
+                            actions.push(Action::Layer(LayerCmd::NewFill(i)));
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    ui.small("Estilos de camada ficam no painel da camada ativa.");
                 });
                 ui.menu_button("Texto e formas", |ui| {
                     let items: [(&str, LayerCmd); 7] = [
@@ -1501,6 +1515,10 @@ impl OrvalithApp {
 
     /// Janelas de ajuste destrutivo, filtros, histograma e perfil de cor.
     fn adjust_windows(&mut self, ctx: &egui::Context) {
+        if let Some(p) = crate::styleui::take_changed_presets() {
+            self.prefs.style_presets = p;
+            self.prefs.save();
+        }
         let active_id = self.docs.get(self.active).map(|d| d.doc.id.0);
         // Uma sessão destrutiva pertence a um documento: trocar de aba a cancela.
         if let Some((did, _)) = &self.adj_session {

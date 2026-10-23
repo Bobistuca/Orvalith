@@ -12,6 +12,7 @@ use crate::adjust::Prepared;
 use crate::blend::{blend_rgb, dissolve_noise, BlendMode};
 use crate::document::{Document, Layer, LayerId, LayerKind};
 use crate::geom::Rect;
+use crate::style;
 
 /// Opções de visualização (não afetam a exportação, que usa `Default`).
 #[derive(Default, Clone, Copy)]
@@ -127,6 +128,9 @@ fn render_single(
         return;
     }
     match layer.kind {
+        LayerKind::Raster if layer.styles.iter().any(|e| e.enabled) => {
+            blend_styled(doc, layer, mask.as_deref(), r, buf)
+        }
         LayerKind::Raster => {
             blend_raster(layer, r, buf, mask.as_deref().map(Vec::as_slice), doc.width)
         }
@@ -275,6 +279,84 @@ fn render_clipped(
         base.blend
     };
     blend_buffer(&b, buf, r, mode, base.opacity * base.fill);
+}
+
+/// Camada raster com estilos: conteúdo (máscara e preenchimento aplicados) + efeitos, numa
+/// região com margem, mesclados depois com o modo e a opacidade da camada.
+fn blend_styled(doc: &Document, layer: &Layer, mask: Option<&Vec<u8>>, r: Rect, buf: &mut [u8]) {
+    let m = style::reach(&layer.styles);
+    let x0 = r.x.saturating_sub(m);
+    let y0 = r.y.saturating_sub(m);
+    let x1 = (r.right() + m).min(doc.width.min(layer.width));
+    let y1 = (r.bottom() + m).min(doc.height.min(layer.height));
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    let (ew, eh) = ((x1 - x0) as usize, (y1 - y0) as usize);
+    let mut content = vec![0u8; ew * eh * 4];
+    for y in 0..eh {
+        for x in 0..ew {
+            let (dx, dy) = (x0 as usize + x, y0 as usize + y);
+            let si = (dy * layer.width as usize + dx) * 4;
+            let mut a = u32::from(layer.pixels[si + 3]);
+            if a == 0 {
+                continue;
+            }
+            if let Some(mk) = mask {
+                a = (a * u32::from(mk[dy * doc.width as usize + dx]) + 127) / 255;
+            }
+            a = (a as f32 * layer.fill).round() as u32;
+            let di = (y * ew + x) * 4;
+            content[di..di + 3].copy_from_slice(&layer.pixels[si..si + 3]);
+            content[di + 3] = a.min(255) as u8;
+        }
+    }
+    let bounds = if style::needs_bounds(&layer.styles) {
+        let (mut minx, mut miny, mut maxx, mut maxy) = (layer.width, layer.height, 0u32, 0u32);
+        for y in 0..layer.height {
+            for x in 0..layer.width {
+                if layer.pixels[(y as usize * layer.width as usize + x as usize) * 4 + 3] > 0 {
+                    minx = minx.min(x);
+                    miny = miny.min(y);
+                    maxx = maxx.max(x);
+                    maxy = maxy.max(y);
+                }
+            }
+        }
+        if minx > maxx {
+            (0.0, 0.0, layer.width as f32, layer.height as f32)
+        } else {
+            (
+                minx as f32,
+                miny as f32,
+                (maxx - minx + 1) as f32,
+                (maxy - miny + 1) as f32,
+            )
+        }
+    } else {
+        (0.0, 0.0, layer.width as f32, layer.height as f32)
+    };
+    let work = style::Work {
+        x: x0,
+        y: y0,
+        w: ew,
+        h: eh,
+    };
+    let out = style::apply(&layer.styles, &content, work, bounds);
+    // Recorta para a região pedida.
+    let mut region = vec![0u8; r.w as usize * r.h as usize * 4];
+    for y in 0..r.h as usize {
+        for x in 0..r.w as usize {
+            let (ox, oy) = (r.x as usize + x, r.y as usize + y);
+            if ox < x0 as usize || oy < y0 as usize || ox >= x1 as usize || oy >= y1 as usize {
+                continue;
+            }
+            let si = ((oy - y0 as usize) * ew + (ox - x0 as usize)) * 4;
+            let di = (y * r.w as usize + x) * 4;
+            region[di..di + 4].copy_from_slice(&out[si..si + 4]);
+        }
+    }
+    blend_buffer(&region, buf, r, layer.blend, layer.opacity);
 }
 
 /// Aplica uma camada de ajuste ao que já está em `buf` (região `r`): o resultado do ajuste é
@@ -785,5 +867,91 @@ mod tests {
             },
         );
         assert_eq!(&only[0..4], &[200, 0, 0, 255]);
+    }
+    fn styled_doc() -> Document {
+        use crate::style::{Effect, EffectKind};
+        let mut d = Document::new("s", 48, 36, Some([255, 255, 255, 255])).unwrap();
+        let mut l = Layer::transparent("obj", 48, 36);
+        for y in 12..24 {
+            for x in 14..26 {
+                l.set_pixel(x, y, [30, 90, 200, 255]);
+            }
+        }
+        let mut shadow = EffectKind::neutral(0);
+        shadow.sanitize();
+        let mut stroke = EffectKind::neutral(4);
+        stroke.sanitize();
+        l.styles = vec![
+            Effect::new(shadow),
+            Effect::new(stroke),
+            Effect::new(EffectKind::neutral(6)),
+        ];
+        d.layers.push(l);
+        d
+    }
+
+    #[test]
+    fn styled_layer_draws_effects_and_toggling_them_restores_the_plain_result() {
+        let mut d = styled_doc();
+        let with = flatten(&d);
+        // Sombra à direita/abaixo (cinza sobre o fundo branco) e traço vermelho fora da borda.
+        let shadow_px = pixel_at(&d, 29, 20).unwrap();
+        assert!(shadow_px[0] < 250, "{shadow_px:?}");
+        assert_eq!(
+            pixel_at(&d, 13, 18),
+            Some([255, 0, 0, 255]),
+            "traço externo"
+        );
+        for e in &mut d.layers[1].styles {
+            e.enabled = false;
+        }
+        let plain = flatten(&d);
+        assert_ne!(with, plain);
+        assert_eq!(pixel_at(&d, 20, 18), Some([30, 90, 200, 255]));
+        assert_eq!(pixel_at(&d, 29, 20), Some([255, 255, 255, 255]));
+        d.layers[1].styles.clear();
+        assert_eq!(flatten(&d), plain);
+    }
+
+    #[test]
+    fn partial_region_matches_the_full_render_with_styles() {
+        let d = styled_doc();
+        let full = flatten(&d);
+        for r in [
+            Rect::new(10, 8, 20, 20),
+            Rect::new(0, 0, 48, 36),
+            Rect::new(26, 14, 6, 6),
+            Rect::new(12, 10, 3, 3),
+        ] {
+            let part = flatten_region(&d, r);
+            for y in 0..r.h as usize {
+                for x in 0..r.w as usize {
+                    let (fx, fy) = (r.x as usize + x, r.y as usize + y);
+                    assert_eq!(
+                        part[(y * r.w as usize + x) * 4..(y * r.w as usize + x) * 4 + 4],
+                        full[(fy * 48 + fx) * 4..(fy * 48 + fx) * 4 + 4],
+                        "região {r:?} em ({x},{y})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn styles_follow_opacity_mask_and_fill() {
+        let mut d = styled_doc();
+        d.layers[1].opacity = 0.5;
+        let half = pixel_at(&d, 13, 18).unwrap();
+        assert!(half[1] > 100 && half[1] < 160, "{half:?}"); // vermelho a 50% sobre branco
+        d.layers[1].opacity = 1.0;
+        // Máscara que esconde a metade esquerda do objeto: o traço da borda esquerda some.
+        let mut m = vec![255u8; 48 * 36];
+        for y in 0..36 {
+            for x in 0..20 {
+                m[y * 48 + x] = 0;
+            }
+        }
+        d.layers[1].mask = Some(crate::LayerMask::new(m));
+        assert_eq!(pixel_at(&d, 13, 18), Some([255, 255, 255, 255]));
     }
 }

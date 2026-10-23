@@ -36,6 +36,7 @@ pub enum LayerCmd {
     ToggleClip,
     ToggleMaskView,
     Rasterize,
+    NewFill(usize),
     Boolean(BoolOp),
     VectorMask,
     PathToSelection,
@@ -202,6 +203,15 @@ pub fn run(
                 },
                 |ls| ls[idx].clipped = !clipped,
             );
+        }
+        LayerCmd::NewFill(kind) => {
+            let above = active;
+            let o = vecops::new_source_layer(
+                &open.doc,
+                orvalith_core::LayerSource::Fill(orvalith_core::source::FillSpec::neutral(kind)),
+                above,
+            );
+            open.apply_outcome("Nova camada de preenchimento", o);
         }
         LayerCmd::Rasterize => {
             let Some(id) = active else { return nothing() };
@@ -381,6 +391,7 @@ fn end_prop_drag(open: &mut OpenDoc) {
                 || mask_changed
                 || a.source != b.source
                 || a.adjustment != b.adjustment
+                || a.styles != b.styles
         });
         if changed {
             let after = open.doc.layers.clone();
@@ -504,6 +515,38 @@ fn props_ui(ui: &mut egui::Ui, open: &mut OpenDoc) -> Vec<LayerCmd> {
             .clicked()
         {
             cmds.push(LayerCmd::Rasterize);
+        }
+    }
+    // ---- Camada de preenchimento ----
+    if let Some(orvalith_core::LayerSource::Fill(f)) = open.doc.layers[idx].source.clone() {
+        ui.separator();
+        let mut f = f;
+        let mut st = std::mem::take(&mut open.adj_ui);
+        let changed = crate::styleui::fill_ui(ui, &mut f, &mut st);
+        open.adj_ui = st;
+        if changed {
+            begin_prop_drag(open, "Editar preenchimento");
+            let (w, h) = (open.doc.width, open.doc.height);
+            let l = &mut open.doc.layers[idx];
+            if l.source.as_ref().map(|x| x.default_name()).as_deref() == Some(l.name.as_str()) {
+                l.name = orvalith_core::LayerSource::Fill(f.clone()).default_name();
+            }
+            l.source = Some(orvalith_core::LayerSource::Fill(f));
+            l.rerender(w, h);
+            open.doc.touch();
+        }
+    }
+    // ---- Estilos de camada ----
+    if open.doc.layers[idx].adjustment.is_none() && !open.doc.layers[idx].is_group() {
+        ui.separator();
+        let mut list = open.doc.layers[idx].styles.clone();
+        let mut st = std::mem::take(&mut open.style_ui);
+        let changed = crate::styleui::styles_ui(ui, &mut list, &mut st);
+        open.style_ui = st;
+        if changed {
+            begin_prop_drag(open, "Editar estilos");
+            open.doc.layers[idx].styles = list;
+            open.doc.touch();
         }
     }
     // ---- Camada de ajuste (não destrutiva) ----
@@ -704,7 +747,9 @@ fn list_ui(ui: &mut egui::Ui, open: &mut OpenDoc) -> Vec<LayerCmd> {
             let tag = match &l.source {
                 Some(orvalith_core::LayerSource::Text(_)) => "T ",
                 Some(orvalith_core::LayerSource::Shape(_)) => "F ",
+                Some(orvalith_core::LayerSource::Fill(_)) => "P ",
                 None if l.adjustment.is_some() => "A ",
+                None if !l.styles.is_empty() => "fx ",
                 None => "",
             };
             let has_mask = l.mask.is_some();
@@ -1330,5 +1375,30 @@ mod tests {
             })) => assert_eq!(*w, 2.0),
             other => panic!("{other:?}"),
         }
+    }
+    #[test]
+    fn fill_layers_and_style_edits_are_undoable() {
+        use orvalith_core::style::{Effect, EffectKind};
+        let mut o = open_with_two();
+        let n = o.doc.layers.len();
+        assert!(run1(&mut o, LayerCmd::NewFill(1)).is_none());
+        assert_eq!(o.doc.layers.len(), n + 1);
+        let id = o.doc.layers[n].id;
+        assert!(matches!(
+            o.doc.layers[n].source,
+            Some(orvalith_core::LayerSource::Fill(_))
+        ));
+        o.history.undo(&mut o.doc);
+        assert_eq!(o.doc.layers.len(), n);
+        // Estilos: editar e desfazer em uma ação.
+        let before = o.history.labels().len();
+        begin_prop_drag(&mut o, "Editar estilos");
+        o.doc.layers[0].styles = vec![Effect::new(EffectKind::neutral(0))];
+        o.doc.touch();
+        end_prop_drag(&mut o);
+        assert_eq!(o.history.labels().len(), before + 1);
+        o.history.undo(&mut o.doc);
+        assert!(o.doc.layers[0].styles.is_empty());
+        let _ = id;
     }
 }

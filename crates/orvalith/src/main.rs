@@ -10,6 +10,7 @@ mod liquifyui;
 mod prefs;
 mod retouchui;
 mod select;
+mod styleui;
 mod theme;
 mod tools;
 mod vectool;

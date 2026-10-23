@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::adjust::{gradient_at, GradStop};
+use crate::style::{gradient_t, Pattern};
 use crate::text::{self, TextSpec};
 use crate::vector::{self, ShapeSpec};
 
@@ -17,6 +19,125 @@ pub const MAX_BOOL_DEPTH: usize = 8;
 pub enum LayerSource {
     Text(TextSpec),
     Shape(ShapeSpec),
+    /// Camada de preenchimento (cor, gradiente ou padrão) do tamanho do documento.
+    Fill(FillSpec),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum FillSpec {
+    Solid {
+        color: [u8; 4],
+    },
+    Gradient {
+        stops: Vec<GradStop>,
+        angle: f32,
+        radial: bool,
+        reverse: bool,
+    },
+    Pattern {
+        pattern: Pattern,
+        scale: f32,
+    },
+}
+
+pub const FILL_KINDS: [&str; 3] = ["Cor sólida", "Gradiente", "Padrão"];
+
+impl FillSpec {
+    pub fn neutral(kind: usize) -> Self {
+        match kind {
+            0 => FillSpec::Solid {
+                color: [128, 128, 128, 255],
+            },
+            1 => FillSpec::Gradient {
+                stops: vec![
+                    GradStop {
+                        pos: 0.0,
+                        color: [20, 40, 120],
+                    },
+                    GradStop {
+                        pos: 1.0,
+                        color: [250, 180, 60],
+                    },
+                ],
+                angle: 90.0,
+                radial: false,
+                reverse: false,
+            },
+            _ => FillSpec::Pattern {
+                pattern: Pattern::default_of(0),
+                scale: 16.0,
+            },
+        }
+    }
+
+    pub fn kind_index(&self) -> usize {
+        match self {
+            FillSpec::Solid { .. } => 0,
+            FillSpec::Gradient { .. } => 1,
+            FillSpec::Pattern { .. } => 2,
+        }
+    }
+
+    pub fn render(&self, w: u32, h: u32) -> Vec<u8> {
+        let (wu, hu) = (w as usize, h as usize);
+        let mut out = Vec::with_capacity(wu * hu * 4);
+        match self {
+            FillSpec::Solid { color } => {
+                for _ in 0..wu * hu {
+                    out.extend_from_slice(color);
+                }
+            }
+            FillSpec::Gradient {
+                stops,
+                angle,
+                radial,
+                reverse,
+            } => {
+                for y in 0..hu {
+                    for x in 0..wu {
+                        let t = gradient_t(
+                            x as f32 + 0.5,
+                            y as f32 + 0.5,
+                            (0.0, 0.0, w as f32, h as f32),
+                            *angle,
+                            *radial,
+                        );
+                        let c = gradient_at(stops, if *reverse { 1.0 - t } else { t });
+                        out.extend_from_slice(&c.map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8));
+                        out.push(255);
+                    }
+                }
+            }
+            FillSpec::Pattern { pattern, scale } => {
+                for y in 0..hu {
+                    for x in 0..wu {
+                        out.extend_from_slice(&pattern.color_at(
+                            x as f32 + 0.5,
+                            y as f32 + 0.5,
+                            *scale,
+                        ));
+                        out.push(255);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn is_sane(&self) -> bool {
+        match self {
+            FillSpec::Solid { .. } => true,
+            FillSpec::Gradient { stops, angle, .. } => {
+                stops.len() >= 2
+                    && stops.len() <= 32
+                    && angle.is_finite()
+                    && stops.iter().all(|s| s.pos.is_finite())
+            }
+            FillSpec::Pattern { scale, .. } => {
+                scale.is_finite() && *scale >= 1.0 && *scale <= 4096.0
+            }
+        }
+    }
 }
 
 impl LayerSource {
@@ -25,6 +146,7 @@ impl LayerSource {
         match self {
             LayerSource::Text(t) => text::render_text(t, w, h),
             LayerSource::Shape(s) => vector::render_shape(s, w, h),
+            LayerSource::Fill(f) => f.render(w, h),
         }
     }
 
@@ -35,6 +157,7 @@ impl LayerSource {
                 t.y += dy;
             }
             LayerSource::Shape(s) => s.translate(dx, dy),
+            LayerSource::Fill(_) => {}
         }
     }
 
@@ -43,6 +166,7 @@ impl LayerSource {
         match self {
             LayerSource::Text(t) => Some(text::text_bounds(t)),
             LayerSource::Shape(s) => s.bounds(),
+            LayerSource::Fill(_) => None,
         }
     }
 
@@ -53,6 +177,7 @@ impl LayerSource {
                 t.text.len() <= MAX_TEXT_BYTES && t.x.is_finite() && t.y.is_finite()
             }
             LayerSource::Shape(s) => shape_sane(s),
+            LayerSource::Fill(f) => f.is_sane(),
         }
     }
 
@@ -68,6 +193,7 @@ impl LayerSource {
                     name
                 }
             }
+            LayerSource::Fill(f) => format!("Preenchimento: {}", FILL_KINDS[f.kind_index()]),
             LayerSource::Shape(s) => match &s.geom {
                 vector::Geom::Rect { radius, .. } if *radius > 0.0 => "Retângulo arredondado",
                 vector::Geom::Rect { .. } => "Retângulo",

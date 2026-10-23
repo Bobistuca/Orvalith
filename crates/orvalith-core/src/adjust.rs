@@ -748,7 +748,7 @@ fn hsl_to_rgb(hsl: [f32; 3]) -> [f32; 3] {
     [clamp01(r + m), clamp01(g + m), clamp01(b + m)]
 }
 
-fn gradient_at(stops: &[GradStop], t: f32) -> [f32; 3] {
+pub fn gradient_at(stops: &[GradStop], t: f32) -> [f32; 3] {
     let col = |s: &GradStop| s.color.map(|v| f32::from(v) / 255.0);
     let (Some(first), Some(last)) = (stops.first(), stops.last()) else {
         return [t; 3];

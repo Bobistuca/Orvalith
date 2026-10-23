@@ -48,5 +48,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Liquify (Estágio 10.2)
 [liquify.rs](../crates/orvalith-core/src/liquify.rs): `Field` (deslocamento por pixel) com `push`, `smooth`, `reconstruct` e `render_region` (mapeamento inverso bilinear em alfa pré-multiplicado, sempre a partir do original). UI: [liquifyui.rs](../crates/orvalith/src/liquifyui.rs) mantém a sessão (original + campo) até Enter (uma ação `LayersEdit`) ou Esc.
 
+## Estilos e preenchimentos (Estágio 11.1)
+[style.rs](../crates/orvalith-core/src/style.rs): `Effect`/`EffectKind`, padrões e `apply` (conteúdo + efeitos numa região com margem). `compose.rs::blend_styled` monta o conteúdo (máscara e preenchimento no alfa), aplica os efeitos e mescla com o modo/opacidade da camada; a margem (`style::reach`) garante que renderizações parciais coincidam com a completa. `LayerSource::Fill(FillSpec)` ([source.rs](../crates/orvalith-core/src/source.rs)) dá as camadas de preenchimento. UI: [styleui.rs](../crates/orvalith/src/styleui.rs).
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

@@ -20,10 +20,11 @@ use crate::color::{IccProfile, MAX_PROFILE_BYTES};
 use crate::document::{Channel, Document, Guide, Layer, LayerId, LayerKind, LayerMask};
 use crate::layerops::normalize;
 use crate::source::{shape_sane, LayerSource};
+use crate::style::{effects_sane, Effect};
 use crate::vector::ShapeSpec;
 
 pub const MAGIC: &[u8; 8] = b"ORVALITH";
-pub const CURRENT_VERSION: u32 = 7;
+pub const CURRENT_VERSION: u32 = 8;
 const MAX_CHANNELS: usize = 256;
 const HEADER_LEN: usize = 20;
 const MAX_MANIFEST: usize = 64 * 1024 * 1024;
@@ -146,6 +147,9 @@ struct LayerEntry {
     /// Versão 7: ajuste não destrutivo (JSON lido de forma tolerante).
     #[serde(default)]
     adjustment: Option<serde_json::Value>,
+    /// Versão 8: estilos de camada (JSON lido de forma tolerante).
+    #[serde(default)]
+    styles: Option<serde_json::Value>,
 }
 
 /// Máscara de camada (versão 5): recurso zlib de 1 byte por pixel do documento.
@@ -233,6 +237,9 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
                 .adjustment
                 .as_ref()
                 .and_then(|a| serde_json::to_value(a).ok()),
+            styles: (!l.styles.is_empty())
+                .then(|| serde_json::to_value(&l.styles).ok())
+                .flatten(),
         });
         blob.extend_from_slice(&packed);
         if let Some(m) = &l.mask {
@@ -522,6 +529,12 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         if layer.adjustment.is_some() {
             layer.source = None;
         }
+        layer.styles = e
+            .styles
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<Vec<Effect>>(v.clone()).ok())
+            .filter(|v| effects_sane(v))
+            .unwrap_or_default();
         if let Some(me) = &e.mask {
             let packed = &blob[me.offset as usize..(me.offset + me.stored_len) as usize];
             let mut data = Vec::with_capacity(me.raw_len as usize);
@@ -944,5 +957,35 @@ mod tests {
         old[8..12].copy_from_slice(&6u32.to_le_bytes());
         let back = read(&old).unwrap();
         assert!(back.icc.is_none() && back.layers[0].adjustment.is_none());
+    }
+    #[test]
+    fn styles_and_fill_layers_roundtrip_and_hostile_styles_are_dropped() {
+        use crate::source::FillSpec;
+        use crate::style::{Effect, EffectKind};
+        let mut doc = Document::new("e", 8, 8, Some([9, 9, 9, 255])).unwrap();
+        let mut l = Layer::transparent("x", 8, 8);
+        let mut k = EffectKind::neutral(0);
+        k.sanitize();
+        l.styles = vec![Effect::new(k), Effect::new(EffectKind::neutral(8))];
+        doc.layers.push(l);
+        let fill = FillSpec::neutral(1);
+        let mut f = Layer::from_pixels("fill", 8, 8, fill.render(8, 8));
+        f.source = Some(LayerSource::Fill(fill.clone()));
+        doc.layers.push(f);
+        let bytes = write(&doc).unwrap();
+        let back = read(&bytes).unwrap();
+        assert_eq!(back.layers[1].styles, doc.layers[1].styles);
+        assert_eq!(back.layers[2].source, Some(LayerSource::Fill(fill)));
+        // Estilos com números fora dos limites são ignorados (camada sem estilos).
+        let man_len = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        let man = String::from_utf8(bytes[HEADER_LEN..HEADER_LEN + man_len].to_vec()).unwrap();
+        let bad = man.replacen("\"size\":8.0", "\"size\":9999.0", 1);
+        assert_ne!(bad, man);
+        let mut out = bytes[..12].to_vec();
+        out.extend_from_slice(&(bad.len() as u32).to_le_bytes());
+        out.extend_from_slice(&crc32fast::hash(bad.as_bytes()).to_le_bytes());
+        out.extend_from_slice(bad.as_bytes());
+        out.extend_from_slice(&bytes[HEADER_LEN + man_len..]);
+        assert!(read(&out).unwrap().layers[1].styles.is_empty());
     }
 }

@@ -312,7 +312,7 @@ pub fn adjust_ui(ui: &mut egui::Ui, adj: &mut Adjustment, st: &mut AdjUiState) -
     ch
 }
 
-fn gradient_editor(ui: &mut egui::Ui, stops: &mut Vec<GradStop>, st: &mut AdjUiState) -> bool {
+pub fn gradient_editor(ui: &mut egui::Ui, stops: &mut Vec<GradStop>, st: &mut AdjUiState) -> bool {
     let mut ch = false;
     st.stop = st.stop.min(stops.len().saturating_sub(1));
     // Faixa de pré-visualização.

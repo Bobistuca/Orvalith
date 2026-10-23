@@ -523,7 +523,7 @@ impl VecState {
     fn text_spec_of(open: &OpenDoc, id: LayerId) -> Option<TextSpec> {
         match open.doc.layer(id)?.source.as_ref()? {
             LayerSource::Text(t) => Some(t.clone()),
-            LayerSource::Shape(_) => None,
+            LayerSource::Shape(_) | LayerSource::Fill(_) => None,
         }
     }
 
@@ -938,6 +938,9 @@ pub fn source_props_ui(ui: &mut egui::Ui, src: &mut LayerSource, filter: &mut St
                     );
                 });
             }
+        }
+        LayerSource::Fill(_) => {
+            ui.label("Camada de preenchimento (editada no painel da camada).");
         }
     }
     *src != before

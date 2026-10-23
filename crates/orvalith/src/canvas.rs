@@ -4,6 +4,7 @@ use eframe::egui::{self, Color32, CursorIcon, PointerButton, Rect, Sense, Stroke
 use std::collections::HashMap;
 
 use crate::adjustui::AdjUiState;
+use crate::styleui::StyleUiState;
 use orvalith_core::color::Preview;
 use orvalith_core::compose::RenderOpts;
 use orvalith_core::docops::{DocEdit, DocState};
@@ -59,6 +60,7 @@ pub struct OpenDoc {
     pub font_filter: String,
     /// Estado dos controles do editor de ajustes (painel da camada de ajuste).
     pub adj_ui: AdjUiState,
+    pub style_ui: StyleUiState,
     /// Prévia na tela convertida do perfil do documento para sRGB.
     pub proof: bool,
     preview: Option<std::sync::Arc<Preview>>,
@@ -107,6 +109,7 @@ impl OpenDoc {
             renaming_channel: None,
             font_filter: String::new(),
             adj_ui: AdjUiState::default(),
+            style_ui: StyleUiState::default(),
             proof: true,
             preview: None,
             preview_key: (None, true),

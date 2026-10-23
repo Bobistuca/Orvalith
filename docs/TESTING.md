@@ -21,6 +21,9 @@ fmt, clippy, 112 testes e build release OK; smoke test abre/fecha. Manual: duas 
 ## Estágio 3 (2026-10-23)
 fmt, clippy, 70 testes e build release OK; smoke test abre/fecha. Manual: Ctrl+N → B (pincel): arrastar rápido em círculos, conferir ausência de lacunas e que Ctrl+Z desfaz o traço inteiro; [ e ] mudam o tamanho; E apaga; I amostra (Alt = fundo); G balde (Tolerância/Contíguo); Shift+G gradiente (Esc cancela durante o arrasto); X troca cores, D restaura; salvar preset e reiniciar o app; salvar `.orva`, reabrir e comparar a pintura; testar em zoom 25%, 100% e 800%.
 
+## Estágio 11.1 (2026-10-23)
+fmt, clippy -D warnings, 334 testes (núcleo 238 + app 96) e build release OK; smoke test: abre e fecha. Manual: criar texto/forma, abrir o painel da camada → Estilos → adicionar Sombra projetada, Traço e Sobreposição de gradiente; ativar/desativar/reordenar; salvar predefinição e aplicar em outra camada; Preenchimento → Nova camada: Gradiente; salvar `.orva`, reabrir e editar.
+
 ## Estágio 10.2 (2026-10-23)
 fmt, clippy -D warnings, 318 testes (núcleo 225 + app 93) e build release OK; smoke test: abre e fecha. Manual: Shift+R; arrastar sobre um rosto/objeto (Deformar); Suavizar e Reconstruir por cima; Esc cancela; Enter aplica e Ctrl+Z desfaz; com seleção ativa só a seleção deforma.
 

@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use orvalith_core::paint::{BrushParams, BrushPreset};
+use orvalith_core::style::StylePreset;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -28,6 +29,8 @@ pub struct Prefs {
     pub bg: [u8; 4],
     pub brush_presets: Vec<BrushPreset>,
     pub swatches: Vec<[u8; 4]>,
+    /// Predefinições de estilos de camada.
+    pub style_presets: Vec<StylePreset>,
 }
 
 pub const MAX_RECENT: usize = 8;
@@ -48,6 +51,7 @@ impl Default for Prefs {
             bg: [255, 255, 255, 255],
             brush_presets: Vec::new(),
             swatches: Vec::new(),
+            style_presets: Vec::new(),
         }
     }
 }
@@ -72,6 +76,9 @@ impl Prefs {
         self.brush = self.brush.sanitized();
         self.brush_presets.truncate(200);
         self.swatches.truncate(200);
+        self.style_presets.truncate(100);
+        self.style_presets
+            .retain(|p| orvalith_core::style::effects_sane(&p.effects));
         self
     }
 

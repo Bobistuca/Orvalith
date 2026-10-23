@@ -27,6 +27,7 @@ pub mod retouch;
 pub mod selection;
 pub mod snap;
 pub mod source;
+pub mod style;
 pub mod text;
 pub mod transform;
 pub mod vecops;
