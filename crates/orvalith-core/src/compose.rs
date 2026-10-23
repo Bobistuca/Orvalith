@@ -151,7 +151,8 @@ fn blend_buffer(src_buf: &[u8], buf: &mut [u8], r: Rect, mode: BlendMode, scale:
     }
 }
 
-fn lerp_px(a: [u8; 4], b: [u8; 4], t: f32) -> [u8; 4] {
+/// Interpolação entre dois pixels em alfa pré-multiplicado.
+pub fn lerp_px(a: [u8; 4], b: [u8; 4], t: f32) -> [u8; 4] {
     let t = t.clamp(0.0, 1.0);
     let (aa, ba) = (f32::from(a[3]) / 255.0, f32::from(b[3]) / 255.0);
     let oa = aa + (ba - aa) * t;

@@ -15,9 +15,10 @@ pub mod imageio;
 pub mod layerops;
 pub mod orva;
 pub mod paint;
+pub mod selection;
 pub mod view;
 
 pub use blend::BlendMode;
-pub use document::{Document, DocumentId, Layer, LayerId, LayerKind};
+pub use document::{Channel, Document, DocumentId, Layer, LayerId, LayerKind, Selection};
 pub use geom::Rect;
 pub use history::{Command, History};

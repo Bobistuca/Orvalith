@@ -27,5 +27,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Camadas (Estágio 4)
 `Layer.pixels` é `Arc<Vec<u8>>` (copy-on-write via `pixels_mut`): clonar a lista de camadas é barato, e `edit::LayersEdit` guarda antes/depois da lista inteira — operações estruturais (agrupar, mesclar, mover, renomear, bloqueios…) são uma ação cada, e só buffers novos contam para o orçamento do histórico. [layerops.rs](../crates/orvalith-core/src/layerops.rs) são funções puras que devolvem a nova lista (invariante: pré-ordem, `normalize`). Detalhes de composição em [[docs/COMPOSITING]]. UI: [layers_ui.rs](../crates/orvalith/src/layers_ui.rs).
 
+## Seleções (Estágio 5)
+[selection.rs](../crates/orvalith-core/src/selection.rs): máscaras de 8 bits (255 = selecionado) com formas (retângulo, elipse, polígono), varinha, faixa de cores, morfologia (disco), pena, suavização, transformação e as operações `clear/fill/extract_selected`. O documento guarda `selection` e `channels` (com `Arc`); alterações passam por `edit::SelectionEdit` (histórico, sem sujar o documento nem reenviar a textura). Pincel, balde e gradiente recebem a máscara e misturam o resultado pixel a pixel. UI: [select.rs](../crates/orvalith/src/select.rs) (ferramentas e diálogos) e [selops.rs](../crates/orvalith/src/app/selops.rs) (cortar/copiar/preencher/máscara rápida). A máscara rápida é um documento cinza próprio, editado pelas mesmas ferramentas, com histórico separado até sair.
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

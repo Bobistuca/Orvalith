@@ -51,4 +51,18 @@ tags: [orvalith, matriz]
 | Isolamento temporário de visibilidade (Alt+clique no olho) | 4 | partial | `compose.rs` teste | fora do histórico e do arquivo |
 | Projeto `.orva` v2 (grupos, modos, bloqueios, preenchimento) lê também v1 | 4 | partial | testes de `orva.rs` | ver [[docs/ORVA_FORMAT]] |
 | Comparação CPU×GPU de composição | 4 | blocked | — | não existe compositor GPU ainda |
+| Seleção retangular e elíptica (M / Shift+M), proporção 1:1, bordas suaves ou duras | 5 | partial | `selection.rs` (área, cobertura fracionária, recorte nas bordas) + `select.rs` | uso com mouse não exercitado |
+| Laço livre (L) e laço poligonal (Shift+L; duplo clique/Enter fecha, Esc cancela) | 5 | partial | `selection.rs` (polígono par-ímpar) + `select.rs` | regra par-ímpar para autointerseções |
+| Varinha mágica (tolerância, contíguo, camada ativa ou todas) | 5 | partial | `select.rs` + `fill.rs` | bordas suavizadas por raio 1 se "Suavizar bordas" |
+| Faixa de cores com prévia ao vivo e amostra do canvas | 5 | partial | `selection.rs`, `select.rs` | distância máx. por canal em RGB (sem Lab) |
+| Modos nova/adicionar/subtrair/interseção (+ Shift, Alt, Shift+Alt) | 5 | partial | `selection.rs`, `select.rs` testes | união = máximo, interseção = mínimo, subtração proporcional |
+| Selecionar tudo, desmarcar, inverter | 5 | partial | testes | — |
+| Expandir, contrair, suavizar, pena (diálogo; pena também nas ferramentas) | 5 | partial | `selection.rs` testes (disco, borda do canvas, núcleo preservado) | síncrono; raio máx. 100 px |
+| Antisserrilhado e contorno ("formigas") da seleção | 5 | partial | `selection_edges` | contorno desenhado só nas partes visíveis (máx. 20 000 trechos) |
+| Cortar/copiar/apagar/preencher respeitando a seleção (inclusive suave) | 5 | partial | `selops.rs`, `selection.rs` testes | cortar não preenche com a cor de fundo; copiar usa área interna |
+| Pincel, lápis, borracha, balde e gradiente limitados à seleção | 5 | partial | `tools.rs`: nada vaza para fora, borda suave dá efeito parcial, desfazer restaura | — |
+| Transformar seleção (mover, escalar, girar a máscara) e mover seleção arrastando | 5 | partial | `selection.rs` (`transform`, `translate`) + `select.rs` | reamostragem bilinear; sem alças interativas |
+| Salvar/carregar seleções como canais (persistem no `.orva` v3) | 5 | partial | `orva.rs` teste; `select.rs` | sem painel de canais completo (Estágio 7) |
+| Desfazer/refazer de seleções e das edições com seleção | 5 | partial | `select.rs`, `selops.rs` testes | seleção não marca o documento como modificado |
+| Máscara rápida (Q): pinte de preto/branco, sobreposição vermelha | 5 | partial | `selops.rs` teste de ida e volta | só pincel/lápis/balde/gradiente; sem opções de cor/opacidade da sobreposição |
 | Demais estágios (5–16) | 5–16 | planned | — | ver [[ROADMAP]] |

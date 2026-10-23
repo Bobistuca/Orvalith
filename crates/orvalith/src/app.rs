@@ -1,6 +1,7 @@
 //! Estado da aplicação e interface: menus, abas, camadas, diálogos, atalhos e status.
 
 mod io;
+mod selops;
 
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -10,6 +11,8 @@ use eframe::egui::{self, Key, Modifiers};
 use orvalith_core::{Document, Layer};
 
 use crate::canvas::OpenDoc;
+use selops::{gray, SelCmd};
+
 use crate::canvas::{self, ViewCmd};
 use crate::layers_ui::{self, LayerCmd};
 use crate::prefs::Prefs;
@@ -51,6 +54,11 @@ enum Action {
     BrushSize(f32),
     CancelTool,
     Layer(LayerCmd),
+    Select(SelCmd),
+    CopySel(bool),
+    DeleteKey,
+    Fill(bool),
+    Confirm,
 }
 
 pub struct OrvalithApp {
@@ -159,6 +167,14 @@ impl OrvalithApp {
 
     fn undo_redo(&mut self, redo: bool) {
         if let Some(o) = self.docs.get_mut(self.active) {
+            if let Some(qm) = o.qm.as_deref_mut() {
+                if redo {
+                    qm.history.redo(&mut qm.doc);
+                } else {
+                    qm.history.undo(&mut qm.doc);
+                }
+                return;
+            }
             if redo {
                 o.history.redo(&mut o.doc);
             } else {
@@ -210,6 +226,17 @@ impl OrvalithApp {
                         layers_ui::run(open, cmd, &mut self.layer_clip, &mut self.layer_counter);
                 }
             }
+            Action::Select(c) => self.run_select(c),
+            Action::CopySel(cut) => self.copy_cut(cut),
+            Action::DeleteKey => self.delete_key(),
+            Action::Fill(bg) => self.fill_selection(bg),
+            Action::Confirm => {
+                if self.tools.sel.active() {
+                    if let Some(o) = self.docs.get_mut(self.active) {
+                        self.tools.confirm(o);
+                    }
+                }
+            }
             Action::Undo => self.undo_redo(false),
             Action::Redo => self.undo_redo(true),
             Action::View(c) => *view_cmd = Some(c),
@@ -243,7 +270,21 @@ impl OrvalithApp {
         let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
         ctx.input_mut(|i| {
             // Variantes com Shift primeiro: Ctrl+X casaria também com Ctrl+Shift+X.
-            let table: [Shortcut; 37] = [
+            let table: [Shortcut; 49] = [
+                (cs, Key::I, || Action::Select(SelCmd::Invert)),
+                (C, Key::A, || Action::Select(SelCmd::All)),
+                (C, Key::D, || Action::Select(SelCmd::Deselect)),
+                (Modifiers::ALT, Key::Backspace, || Action::Fill(false)),
+                (C, Key::Backspace, || Action::Fill(true)),
+                (Modifiers::NONE, Key::Enter, || Action::Confirm),
+                (Modifiers::NONE, Key::Q, || {
+                    Action::Select(SelCmd::QuickMask)
+                }),
+                (Modifiers::SHIFT, Key::M, || Action::Tool(Tool::Ellipse)),
+                (Modifiers::NONE, Key::M, || Action::Tool(Tool::Marquee)),
+                (Modifiers::SHIFT, Key::L, || Action::Tool(Tool::PolyLasso)),
+                (Modifiers::NONE, Key::L, || Action::Tool(Tool::Lasso)),
+                (Modifiers::NONE, Key::W, || Action::Tool(Tool::Wand)),
                 (cs, Key::N, || Action::Layer(LayerCmd::New)),
                 (cs, Key::G, || Action::Layer(LayerCmd::Ungroup)),
                 (cs, Key::S, || Action::SaveAs),
@@ -269,9 +310,7 @@ impl OrvalithApp {
                 (C, Key::E, || Action::Layer(LayerCmd::MergeSelected)),
                 (C, Key::CloseBracket, || Action::Layer(LayerCmd::Up)),
                 (C, Key::OpenBracket, || Action::Layer(LayerCmd::Down)),
-                (Modifiers::NONE, Key::Delete, || {
-                    Action::Layer(LayerCmd::Delete)
-                }),
+                (Modifiers::NONE, Key::Delete, || Action::DeleteKey),
                 (Modifiers::NONE, Key::V, || Action::Tool(Tool::Move)),
                 (Modifiers::SHIFT, Key::G, || Action::Tool(Tool::Gradient)),
                 (Modifiers::NONE, Key::B, || Action::Tool(Tool::Brush)),
@@ -295,7 +334,8 @@ impl OrvalithApp {
             // O egui-winit converte Ctrl+C/Ctrl+V em eventos próprios (sem evento de tecla).
             for e in &i.events {
                 match e {
-                    egui::Event::Copy => actions.push(Action::Layer(LayerCmd::Copy)),
+                    egui::Event::Copy => actions.push(Action::CopySel(false)),
+                    egui::Event::Cut => actions.push(Action::CopySel(true)),
                     egui::Event::Paste(_) | egui::Event::PasteImage(_) => {
                         actions.push(Action::Layer(LayerCmd::Paste));
                     }
@@ -331,10 +371,20 @@ impl eframe::App for OrvalithApp {
         let has_doc = !self.docs.is_empty();
         let (can_undo, can_redo, undo_label, redo_label) = match self.docs.get(self.active) {
             Some(d) => (
-                d.history.can_undo(),
-                d.history.can_redo(),
-                d.history.undo_label().map(str::to_owned),
-                d.history.redo_label().map(str::to_owned),
+                d.qm.as_deref()
+                    .map_or(&d.history, |q| &q.history)
+                    .can_undo(),
+                d.qm.as_deref()
+                    .map_or(&d.history, |q| &q.history)
+                    .can_redo(),
+                d.qm.as_deref()
+                    .map_or(&d.history, |q| &q.history)
+                    .undo_label()
+                    .map(str::to_owned),
+                d.qm.as_deref()
+                    .map_or(&d.history, |q| &q.history)
+                    .redo_label()
+                    .map(str::to_owned),
             ),
             None => (false, false, None, None),
         };
@@ -413,9 +463,60 @@ impl eframe::App for OrvalithApp {
                         ui.close();
                     }
                     ui.separator();
+                    let edit_items: [(&str, &str, Action); 6] = [
+                        ("Cortar", "Ctrl+X", Action::CopySel(true)),
+                        ("Copiar", "Ctrl+C", Action::CopySel(false)),
+                        ("Colar", "Ctrl+V", Action::Layer(LayerCmd::Paste)),
+                        ("Apagar seleção", "Delete", Action::DeleteKey),
+                        (
+                            "Preencher com a cor de frente",
+                            "Alt+Backspace",
+                            Action::Fill(false),
+                        ),
+                        (
+                            "Preencher com a cor de fundo",
+                            "Ctrl+Backspace",
+                            Action::Fill(true),
+                        ),
+                    ];
+                    for (label, sc, act) in edit_items {
+                        if ui
+                            .add_enabled(has_doc, egui::Button::new(label).shortcut_text(sc))
+                            .clicked()
+                        {
+                            actions.push(act);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
                     if ui.button("Preferências…").clicked() {
                         self.prefs_open = true;
                         ui.close();
+                    }
+                });
+                ui.menu_button("Selecionar", |ui| {
+                    let items: [(&str, &str, SelCmd); 8] = [
+                        ("Tudo", "Ctrl+A", SelCmd::All),
+                        ("Desmarcar", "Ctrl+D", SelCmd::Deselect),
+                        ("Inverter", "Ctrl+Shift+I", SelCmd::Invert),
+                        ("Faixa de cores…", "", SelCmd::Range),
+                        (
+                            "Modificar (expandir, contrair, suavizar, pena)…",
+                            "",
+                            SelCmd::Modify,
+                        ),
+                        ("Transformar seleção…", "", SelCmd::Transform),
+                        ("Canais de seleção (salvar/carregar)…", "", SelCmd::Channels),
+                        ("Máscara rápida", "Q", SelCmd::QuickMask),
+                    ];
+                    for (label, sc, cmd) in items {
+                        if ui
+                            .add_enabled(has_doc, egui::Button::new(label).shortcut_text(sc))
+                            .clicked()
+                        {
+                            actions.push(Action::Select(cmd));
+                            ui.close();
+                        }
                     }
                 });
                 ui.menu_button("Camada", |ui| {
@@ -508,6 +609,14 @@ impl eframe::App for OrvalithApp {
                             ui.separator();
                             ui.label(format!("x: {}  y: {}", p[0].floor(), p[1].floor()));
                         }
+                        if let Some(r) = d.sel_info {
+                            ui.separator();
+                            ui.label(format!("Seleção: {} × {} em ({}, {})", r.w, r.h, r.x, r.y));
+                        }
+                        if d.qm.is_some() {
+                            ui.separator();
+                            ui.label(egui::RichText::new("Máscara rápida").color(theme::COPPER));
+                        }
                         if let Some(n) = &self.tools.notice {
                             ui.separator();
                             ui.label(egui::RichText::new(n).color(theme::COPPER));
@@ -561,9 +670,31 @@ impl eframe::App for OrvalithApp {
                     Action::View(c) => Some(*c),
                     _ => None,
                 });
-                let out = canvas::show(ui, open, cmd, space_down, self.tools.overlay());
+                let overlay = self.tools.overlay(self.cursor_doc);
+                let out = canvas::show(ui, open, cmd, space_down, &overlay);
                 self.cursor_doc = out.hover;
-                self.tools.handle(open, &out);
+                if self.tools.sel.picking() {
+                    self.tools.sel.range_pick(open, &out);
+                } else if let Some(qm) = open.qm.as_deref_mut() {
+                    let t = self.tools.tool;
+                    if crate::select::is_selection_tool(t) || t == Tool::Move {
+                        self.tools.notice = Some(
+                            "Máscara rápida: use pincel, lápis, balde ou gradiente (Q sai).".into(),
+                        );
+                    } else if t == Tool::Eraser {
+                        self.tools.notice =
+                            Some("Na máscara rápida, pinte de branco para selecionar.".into());
+                    } else {
+                        let (fg, bg) = (self.tools.fg, self.tools.bg);
+                        self.tools.fg = gray(fg);
+                        self.tools.bg = gray(bg);
+                        self.tools.handle(qm, &out);
+                        self.tools.fg = fg;
+                        self.tools.bg = bg;
+                    }
+                } else {
+                    self.tools.handle(open, &out);
+                }
             } else {
                 self.cursor_doc = None;
                 ui.vertical_centered(|ui| {
@@ -603,6 +734,9 @@ impl eframe::App for OrvalithApp {
         self.autosave_tick(&ctx);
         self.update_title(&ctx);
         self.show_dialogs(&ctx);
+        if let Some(open) = self.docs.get_mut(self.active) {
+            self.tools.sel.show_dialogs(&ctx, open, self.tools.fg);
+        }
     }
 }
 

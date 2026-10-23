@@ -14,10 +14,16 @@ use orvalith_core::paint::{builtin_presets, BrushParams, BrushPreset, StrokeMode
 use orvalith_core::{compose, DocumentId, Layer, LayerId};
 
 use crate::canvas::{CanvasOut, OpenDoc, Overlay};
+use crate::select::SelectState;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tool {
     Move,
+    Marquee,
+    Ellipse,
+    Lasso,
+    PolyLasso,
+    Wand,
     Brush,
     Pencil,
     Eraser,
@@ -27,8 +33,13 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub const ALL: [Tool; 7] = [
+    pub const ALL: [Tool; 12] = [
         Tool::Move,
+        Tool::Marquee,
+        Tool::Ellipse,
+        Tool::Lasso,
+        Tool::PolyLasso,
+        Tool::Wand,
         Tool::Brush,
         Tool::Pencil,
         Tool::Eraser,
@@ -40,6 +51,11 @@ impl Tool {
     pub fn label(self) -> &'static str {
         match self {
             Tool::Move => "Mover",
+            Tool::Marquee => "Seleção retangular",
+            Tool::Ellipse => "Seleção elíptica",
+            Tool::Lasso => "Laço",
+            Tool::PolyLasso => "Laço poligonal",
+            Tool::Wand => "Varinha mágica",
             Tool::Brush => "Pincel",
             Tool::Pencil => "Lápis",
             Tool::Eraser => "Borracha",
@@ -52,6 +68,11 @@ impl Tool {
     pub fn shortcut(self) -> &'static str {
         match self {
             Tool::Move => "V",
+            Tool::Marquee => "M",
+            Tool::Ellipse => "Shift+M",
+            Tool::Lasso => "L",
+            Tool::PolyLasso => "Shift+L",
+            Tool::Wand => "W",
             Tool::Brush => "B",
             Tool::Pencil => "N",
             Tool::Eraser => "E",
@@ -109,6 +130,7 @@ pub struct ToolState {
     pub sample_composite: bool,
     pub pressure_size: bool,
     pub notice: Option<String>,
+    pub sel: SelectState,
     preset_name: String,
     active: Option<Active>,
 }
@@ -133,7 +155,7 @@ const PALETTE: [[u8; 4]; 16] = [
 ];
 
 /// Motivo pelo qual a camada não pode receber pintura, se houver.
-fn paint_blocked(l: &Layer) -> Option<String> {
+pub(crate) fn paint_blocked(l: &Layer) -> Option<String> {
     if l.is_group() {
         Some("Selecione uma camada raster (não um grupo) para pintar.".into())
     } else if !l.visible {
@@ -181,6 +203,7 @@ impl ToolState {
             sample_composite: true,
             pressure_size: true,
             notice: None,
+            sel: SelectState::default(),
             preset_name: String::new(),
             active: None,
         }
@@ -216,8 +239,9 @@ impl ToolState {
         self.brush.size = (s + step).clamp(1.0, 2000.0);
     }
 
-    pub fn overlay(&self) -> Overlay {
+    pub fn overlay(&self, hover: Option<[f32; 2]>) -> Overlay {
         Overlay {
+            shape: self.sel.shape(self.tool, hover),
             tool_cursor: true,
             brush_radius_doc: self.tool.paints_strokes().then_some(self.brush.size / 2.0),
         }
@@ -225,6 +249,7 @@ impl ToolState {
 
     /// Cancela um gradiente em andamento restaurando os pixels originais (tecla Esc).
     pub fn cancel(&mut self, open: &mut OpenDoc) {
+        self.sel.cancel(open);
         match self.active.take() {
             Some(Active::Gradient {
                 layer, original, ..
@@ -246,6 +271,11 @@ impl ToolState {
         }
     }
 
+    /// Confirma a operação em andamento (Enter): fecha o laço poligonal.
+    pub fn confirm(&mut self, open: &mut OpenDoc) {
+        self.sel.confirm(open);
+    }
+
     /// Interpreta os eventos de ponteiro do quadro para a ferramenta atual.
     pub fn handle(&mut self, open: &mut OpenDoc, out: &CanvasOut) {
         let doc_id = open.doc.id;
@@ -259,6 +289,9 @@ impl ToolState {
             self.active = None;
         }
         match self.tool {
+            Tool::Marquee | Tool::Ellipse | Tool::Lasso | Tool::PolyLasso | Tool::Wand => {
+                self.sel.handle(self.tool, open, out)
+            }
             Tool::Move => self.handle_move(open, out),
             Tool::Brush | Tool::Pencil | Tool::Eraser => self.handle_stroke(open, out),
             Tool::Eyedropper => self.handle_eyedropper(open, out),
@@ -363,7 +396,8 @@ impl ToolState {
                     pencil,
                     label,
                 )
-                .with_alpha_lock(open.doc.layers[idx].lock_alpha),
+                .with_alpha_lock(open.doc.layers[idx].lock_alpha)
+                .with_selection(open.doc.selection.mask.clone()),
             );
 
             let layer = &mut open.doc.layers[idx];
@@ -442,6 +476,7 @@ impl ToolState {
             return;
         }
         let lock_alpha = open.doc.layers[idx].lock_alpha;
+        let sel_mask = open.doc.selection.mask.clone();
         let patch: Option<PixelPatch> = bucket_fill(
             &mut open.doc.layers[idx],
             p[0].floor() as i64,
@@ -451,6 +486,7 @@ impl ToolState {
             self.fg,
             self.fill_opacity,
             lock_alpha,
+            sel_mask.as_ref().map(|m| m.as_slice()),
         );
         match patch {
             Some(patch) => {
@@ -502,6 +538,7 @@ impl ToolState {
             self.finish_gradient(open, out);
             return;
         };
+        let sel_mask = open.doc.selection.mask.clone();
         let preview = match &self.active {
             Some(Active::Gradient { start, .. }) => Some(self.gradient(*start, (last[0], last[1]))),
             _ => None,
@@ -517,7 +554,12 @@ impl ToolState {
         ) = (preview, self.active.as_mut())
         {
             if let Some(l) = open.doc.layers.iter_mut().find(|l| l.id == *layer) {
-                if g.render(l, original, l.lock_alpha) {
+                if g.render(
+                    l,
+                    original,
+                    l.lock_alpha,
+                    sel_mask.as_ref().map(|m| m.as_slice()),
+                ) {
                     *drawn = true;
                     let r = Rect::full(l.width, l.height);
                     open.mark_dirty(r);
@@ -559,6 +601,9 @@ impl ToolState {
             ui.strong(self.tool.label());
             ui.separator();
             match self.tool {
+                Tool::Marquee | Tool::Ellipse | Tool::Lasso | Tool::PolyLasso | Tool::Wand => {
+                    self.sel.options_ui(ui, self.tool)
+                }
                 Tool::Move => {
                     ui.label("Arraste para mover a(s) camada(s) selecionada(s). Pixels que saem da imagem são descartados; bloqueio de posição impede o movimento.");
                 }
@@ -981,5 +1026,69 @@ mod tests {
         drag(&mut t, &mut o, &[[2.0, 2.0], [2.0, 2.0]]);
         assert_eq!(o.doc.layers[0].pixel(2, 2).unwrap(), [255, 0, 0, 200]);
         assert_eq!(o.doc.layers[0].pixel(5, 5).unwrap()[3], 0);
+    }
+    fn with_selection(o: &mut OpenDoc, x0: f32, y0: f32, x1: f32, y1: f32) {
+        let m = orvalith_core::selection::rect_mask(
+            o.doc.width,
+            o.doc.height,
+            (x0, y0),
+            (x1, y1),
+            true,
+        );
+        o.doc.selection = orvalith_core::Selection::from_mask(Some(m));
+    }
+
+    #[test]
+    fn tools_never_touch_pixels_outside_the_selection() {
+        let original = open_doc().doc.layers[0].pixels.clone();
+        let outside = |o: &OpenDoc| {
+            (0..30u32).all(|y| {
+                (0..40u32).all(|x| {
+                    let inside = (10..20).contains(&x) && (5..15).contains(&y);
+                    inside || o.doc.layers[0].pixel(x, y).unwrap() == [255, 255, 255, 255]
+                })
+            })
+        };
+        for tool in [
+            Tool::Brush,
+            Tool::Pencil,
+            Tool::Eraser,
+            Tool::Bucket,
+            Tool::Gradient,
+        ] {
+            let mut o = open_doc();
+            with_selection(&mut o, 10.0, 5.0, 20.0, 15.0);
+            let mut t = ToolState::new(
+                BrushParams {
+                    size: 12.0,
+                    hardness: 1.0,
+                    ..BrushParams::default()
+                },
+                [255, 0, 0, 255],
+                [0, 0, 255, 255],
+            );
+            t.tool = tool;
+            t.tolerance = 255;
+            drag(&mut t, &mut o, &[[0.0, 2.0], [39.0, 20.0], [5.0, 28.0]]);
+            assert!(outside(&o), "{tool:?} vazou para fora da seleção");
+            assert_ne!(
+                o.doc.layers[0].pixels, original,
+                "{tool:?} não pintou dentro"
+            );
+            o.history.undo(&mut o.doc);
+            assert_eq!(o.doc.layers[0].pixels, original, "{tool:?}");
+        }
+    }
+
+    #[test]
+    fn soft_selection_edge_gives_partial_bucket_effect() {
+        let mut o = open_doc();
+        let m = vec![128u8; 40 * 30];
+        o.doc.selection = orvalith_core::Selection::from_mask(Some(m));
+        let mut t = ToolState::new(BrushParams::default(), [0, 0, 0, 255], [0; 4]);
+        t.tool = Tool::Bucket;
+        drag(&mut t, &mut o, &[[5.0, 5.0], [5.0, 5.0]]);
+        let v = o.doc.layers[0].pixel(5, 5).unwrap();
+        assert!((126..=129).contains(&v[0]), "{v:?}");
     }
 }

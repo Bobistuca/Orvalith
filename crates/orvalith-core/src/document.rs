@@ -148,6 +148,32 @@ impl Layer {
     }
 }
 
+/// Seleção atual: máscara 8 bits do tamanho do documento, ou nenhuma.
+#[derive(Debug, Clone, Default)]
+pub struct Selection {
+    pub mask: Option<Arc<Vec<u8>>>,
+}
+
+impl Selection {
+    pub fn from_mask(mask: Option<Vec<u8>>) -> Self {
+        Self {
+            mask: mask.map(Arc::new),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.mask.is_none()
+    }
+}
+
+/// Seleção salva como canal auxiliar (alfa).
+#[derive(Debug, Clone)]
+pub struct Channel {
+    pub id: u64,
+    pub name: String,
+    pub mask: Arc<Vec<u8>>,
+}
+
 /// Documento aberto no editor.
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -159,6 +185,10 @@ pub struct Document {
     pub ppi: f32,
     /// Camadas e grupos, da mais baixa para a mais alta.
     pub layers: Vec<Layer>,
+    /// Seleção atual (não é gravada no projeto; use canais).
+    pub selection: Selection,
+    /// Canais alfa auxiliares (seleções salvas).
+    pub channels: Vec<Channel>,
     /// Há alterações não salvas.
     pub modified: bool,
     /// Incrementa a cada edição; descarta resultados assíncronos obsoletos.
@@ -193,6 +223,8 @@ impl Document {
             height,
             ppi: 72.0,
             layers: vec![layer],
+            selection: Selection::default(),
+            channels: Vec::new(),
             modified: false,
             revision: 0,
         })
@@ -210,6 +242,8 @@ impl Document {
             height,
             ppi,
             layers,
+            selection: Selection::default(),
+            channels: Vec::new(),
             modified: false,
             revision: 0,
         }
@@ -224,6 +258,15 @@ impl Document {
     /// Avança a revisão sem marcar como modificado (mudança só de visualização).
     pub fn bump_view(&mut self) {
         self.revision += 1;
+    }
+
+    /// Próximo ID livre para canais.
+    pub fn new_channel_id(&self) -> u64 {
+        self.channels
+            .iter()
+            .map(|c| c.id)
+            .max()
+            .map_or(1, |m| m + 1)
     }
 
     pub fn index_of(&self, id: LayerId) -> Option<usize> {

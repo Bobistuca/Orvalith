@@ -38,6 +38,11 @@ pub struct OpenDoc {
     pub thumbs_rev: u64,
     /// Renomeação em andamento no painel.
     pub renaming: Option<(LayerId, String)>,
+    /// Máscara rápida: um documento cinza (255 = selecionado) editado com as ferramentas de pintura.
+    pub qm: Option<Box<OpenDoc>>,
+    sel_edges: Option<(usize, Vec<[f32; 4]>)>,
+    /// Retângulo envolvente da seleção atual (para a barra de status).
+    pub sel_info: Option<PixRect>,
     /// Última revisão gravada na cópia de recuperação.
     pub autosaved_rev: Option<u64>,
     /// Camada que recebe pintura.
@@ -67,6 +72,9 @@ impl OpenDoc {
             thumbs: HashMap::new(),
             thumbs_rev: 0,
             renaming: None,
+            qm: None,
+            sel_edges: None,
+            sel_info: None,
             autosaved_rev: None,
             active_layer,
             texture: None,
@@ -93,6 +101,50 @@ impl OpenDoc {
         self.doc.touch();
         self.dirty = Some(self.dirty.map_or(rect, |d| d.union(rect)));
         self.tracked_rev = self.doc.revision;
+    }
+
+    /// Executa um comando que não altera pixels (seleção, canais): não suja o documento
+    /// nem força o reenvio da textura.
+    pub fn execute_nonpixel(&mut self, cmd: Box<dyn orvalith_core::Command>) {
+        let partial_ok = self.tracked_rev == self.doc.revision;
+        let was_modified = self.doc.modified;
+        self.history.execute(&mut self.doc, cmd);
+        self.doc.modified = was_modified;
+        if partial_ok {
+            self.tracked_rev = self.doc.revision;
+            self.dirty.get_or_insert(PixRect::new(0, 0, 0, 0));
+        }
+    }
+
+    /// Entra na máscara rápida a partir da seleção atual (sem seleção = tudo selecionado).
+    pub fn enter_quick_mask(&mut self) {
+        let (w, h) = (self.doc.width, self.doc.height);
+        let mut px = Vec::with_capacity(w as usize * h as usize * 4);
+        for i in 0..w as usize * h as usize {
+            let v = self.doc.selection.mask.as_ref().map_or(255, |m| m[i]);
+            px.extend_from_slice(&[v, v, v, 255]);
+        }
+        if let Ok(mut d) = Document::new("Máscara rápida", w, h, None) {
+            d.layers[0] = Layer::from_pixels("Máscara", w, h, px);
+            self.qm = Some(Box::new(OpenDoc::new(d)));
+        }
+    }
+
+    /// Sai da máscara rápida e devolve a máscara editada (None = tudo selecionado).
+    pub fn leave_quick_mask(&mut self) -> Option<Option<Vec<u8>>> {
+        let qm = self.qm.take()?;
+        let mask: Vec<u8> = qm.doc.layers[0]
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| p[0])
+            .collect();
+        Some(if mask.iter().all(|&v| v == 255) {
+            None
+        } else {
+            orvalith_core::selection::nonempty(mask)
+        })
     }
 
     /// Registra uma troca de camadas já aplicada ao documento (ex.: mover), exibida com
@@ -130,9 +182,19 @@ pub enum ViewCmd {
     ZoomOut,
 }
 
+/// Forma de seleção em construção, em coordenadas do documento.
+#[derive(Clone)]
+pub enum Shape {
+    Rect((f32, f32), (f32, f32)),
+    Ellipse((f32, f32), (f32, f32)),
+    Poly(Vec<(f32, f32)>),
+}
+
 /// Informações de desenho vindas da ferramenta atual.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub struct Overlay {
+    /// Forma de seleção em construção (contorno tracejado).
+    pub shape: Option<Shape>,
     /// A ferramenta atual usa o cursor de mira.
     pub tool_cursor: bool,
     /// Raio do pincel em pixels do documento (para o contorno sob o cursor).
@@ -150,6 +212,9 @@ pub struct CanvasOut {
     pub down: bool,
     pub released: bool,
     pub alt: bool,
+    pub shift: bool,
+    /// Duplo clique do botão primário neste quadro.
+    pub double_click: bool,
     /// Pressão da caneta (0..=1) quando o sistema a informa; 1.0 com mouse.
     pub pressure: f32,
 }
@@ -160,7 +225,7 @@ pub fn show(
     open: &mut OpenDoc,
     cmd: Option<ViewCmd>,
     space_down: bool,
-    overlay: Overlay,
+    overlay: &Overlay,
 ) -> CanvasOut {
     let (rect, resp) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
     let ppp = ui.ctx().pixels_per_point();
@@ -233,7 +298,7 @@ pub fn show(
         ..Default::default()
     };
     let inside = ui.rect_contains_pointer(rect) && resp.hovered();
-    let (pressed, down, released, pts, alt, force, latest) = ui.input(|i| {
+    let (pressed, down, released, pts, (alt, shift, dbl), force, latest) = ui.input(|i| {
         let pts: Vec<egui::Pos2> = i
             .events
             .iter()
@@ -251,12 +316,18 @@ pub fn show(
             i.pointer.button_down(PointerButton::Primary),
             i.pointer.button_released(PointerButton::Primary),
             pts,
-            i.modifiers.alt,
+            (
+                i.modifiers.alt,
+                i.modifiers.shift,
+                i.pointer.button_double_clicked(PointerButton::Primary),
+            ),
             force,
             i.pointer.latest_pos(),
         )
     });
     out.alt = alt;
+    out.shift = shift;
+    out.double_click = dbl;
     out.down = down;
     out.released = released;
     if let Some(f) = force {
@@ -288,15 +359,30 @@ pub fn show(
             Color32::LIGHT_RED,
         );
     } else {
-        sync_texture(ui.ctx(), open);
+        sync_texture(ui.ctx(), open, "doc", &render_composite);
+        let full_uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
         if let Some((_, tex)) = &open.texture {
-            painter.image(
-                tex.id(),
-                img_rect,
-                Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
+            painter.image(tex.id(), img_rect, full_uv, Color32::WHITE);
         }
+        if let Some(qm) = open.qm.as_deref_mut() {
+            sync_texture(ui.ctx(), qm, "qmask", &render_quick_mask);
+            if let Some((_, tex)) = &qm.texture {
+                painter.image(tex.id(), img_rect, full_uv, Color32::WHITE);
+            }
+        }
+    }
+
+    let phase = (ui.input(|i| i.time) * 24.0) as f32;
+    let animate = open.doc.selection.mask.is_some() || overlay.shape.is_some();
+    if open.qm.is_none() {
+        draw_selection(&painter, open, &view, rect, phase);
+    }
+    if let Some(shape) = &overlay.shape {
+        draw_shape(&painter, shape, &view, rect, phase);
+    }
+    if animate {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(80));
     }
 
     if let (Some(r), Some(p)) = (overlay.brush_radius_doc, resp.hover_pos()) {
@@ -310,7 +396,13 @@ pub fn show(
 }
 
 /// Atualiza a textura: só a região alterada quando possível, ou tudo se a mudança foi geral.
-fn sync_texture(ctx: &egui::Context, open: &mut OpenDoc) {
+/// `render` produz os pixels RGBA da região pedida.
+fn sync_texture(
+    ctx: &egui::Context,
+    open: &mut OpenDoc,
+    name: &str,
+    render: &dyn Fn(&OpenDoc, PixRect) -> Vec<u8>,
+) {
     let rev = open.doc.revision;
     if open.texture.as_ref().map(|(r, _)| *r) == Some(rev) {
         return;
@@ -324,10 +416,7 @@ fn sync_texture(ctx: &egui::Context, open: &mut OpenDoc) {
             .unwrap_or(PixRect::full(w, h))
             .clamp_to(w, h);
         if !r.is_empty() {
-            let opts = RenderOpts {
-                isolate: open.isolated,
-            };
-            let rgba = compose::flatten_region_with(&open.doc, r, opts);
+            let rgba = render(open, r);
             let image =
                 egui::ColorImage::from_rgba_unmultiplied([r.w as usize, r.h as usize], &rgba);
             if let Some((trev, tex)) = open.texture.as_mut() {
@@ -338,14 +427,167 @@ fn sync_texture(ctx: &egui::Context, open: &mut OpenDoc) {
             *trev = rev;
         }
     } else {
-        let opts = RenderOpts {
-            isolate: open.isolated,
-        };
-        let rgba = compose::flatten_region_with(&open.doc, PixRect::full(w, h), opts);
+        let rgba = render(open, PixRect::full(w, h));
         let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
-        let tex = ctx.load_texture("doc", image, texture_options());
+        let tex = ctx.load_texture(name, image, texture_options());
         open.texture = Some((rev, tex));
         open.dirty = None;
+    }
+}
+
+fn render_composite(o: &OpenDoc, r: PixRect) -> Vec<u8> {
+    let opts = RenderOpts {
+        isolate: o.isolated,
+    };
+    compose::flatten_region_with(&o.doc, r, opts)
+}
+
+/// Sobreposição vermelha (50%) sobre as áreas NÃO selecionadas da máscara rápida.
+fn render_quick_mask(o: &OpenDoc, r: PixRect) -> Vec<u8> {
+    let layer = &o.doc.layers[0];
+    let r = r.clamp_to(layer.width, layer.height);
+    let mut out = Vec::with_capacity(r.w as usize * r.h as usize * 4);
+    for y in r.y..r.bottom() {
+        for x in r.x..r.right() {
+            let v = layer.pixels[(y as usize * layer.width as usize + x as usize) * 4];
+            out.extend_from_slice(&[255, 0, 0, (255 - v) / 2]);
+        }
+    }
+    out
+}
+
+/// Segmentos (x0, y0, x1, y1) da borda da seleção (limiar 50%), com trechos retos fundidos.
+pub fn selection_edges(mask: &[u8], w: u32, h: u32) -> Vec<[f32; 4]> {
+    const CAP: usize = 400_000;
+    let inside = |x: i64, y: i64| -> bool {
+        x >= 0
+            && y >= 0
+            && x < i64::from(w)
+            && y < i64::from(h)
+            && mask[y as usize * w as usize + x as usize] >= 128
+    };
+    let mut segs = Vec::new();
+    for y in 0..=i64::from(h) {
+        let mut start: Option<i64> = None;
+        for x in 0..=i64::from(w) {
+            let edge = x < i64::from(w) && inside(x, y - 1) != inside(x, y);
+            match (edge, start) {
+                (true, None) => start = Some(x),
+                (false, Some(s)) => {
+                    segs.push([s as f32, y as f32, x as f32, y as f32]);
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        if segs.len() > CAP {
+            return segs;
+        }
+    }
+    for x in 0..=i64::from(w) {
+        let mut start: Option<i64> = None;
+        for y in 0..=i64::from(h) {
+            let edge = y < i64::from(h) && inside(x - 1, y) != inside(x, y);
+            match (edge, start) {
+                (true, None) => start = Some(y),
+                (false, Some(s)) => {
+                    segs.push([x as f32, s as f32, x as f32, y as f32]);
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        if segs.len() > CAP {
+            return segs;
+        }
+    }
+    segs
+}
+
+fn ants(painter: &egui::Painter, pts: &[egui::Pos2], phase: f32) {
+    let shadow = Stroke::new(1.5, Color32::BLACK);
+    let light = Stroke::new(1.5, Color32::WHITE);
+    painter.add(egui::Shape::line(pts.to_vec(), shadow));
+    painter.extend(egui::Shape::dashed_line_with_offset(
+        pts,
+        light,
+        &[4.0],
+        &[4.0],
+        phase,
+    ));
+}
+
+fn draw_selection(
+    painter: &egui::Painter,
+    open: &mut OpenDoc,
+    view: &View,
+    rect: Rect,
+    phase: f32,
+) {
+    let Some(mask) = open.doc.selection.mask.clone() else {
+        open.sel_info = None;
+        open.sel_edges = None;
+        return;
+    };
+    let key = std::sync::Arc::as_ptr(&mask) as usize;
+    if open.sel_edges.as_ref().map(|(k, _)| *k) != Some(key) {
+        let edges = selection_edges(&mask, open.doc.width, open.doc.height);
+        open.sel_edges = Some((key, edges));
+        open.sel_info = orvalith_core::selection::bounds(&mask, open.doc.width, open.doc.height);
+    }
+    let to_screen = |x: f32, y: f32| {
+        rect.min
+            + egui::vec2(
+                view.offset[0] + x * view.zoom,
+                view.offset[1] + y * view.zoom,
+            )
+    };
+    if let Some((_, edges)) = &open.sel_edges {
+        let mut drawn = 0;
+        for e in edges {
+            let (a, b) = (to_screen(e[0], e[1]), to_screen(e[2], e[3]));
+            if !rect.intersects(Rect::from_two_pos(a, b).expand(1.0)) {
+                continue;
+            }
+            ants(painter, &[a, b], phase);
+            drawn += 1;
+            if drawn > 20_000 {
+                break;
+            }
+        }
+    }
+}
+
+fn draw_shape(painter: &egui::Painter, shape: &Shape, view: &View, rect: Rect, phase: f32) {
+    let to_screen = |p: (f32, f32)| {
+        rect.min
+            + egui::vec2(
+                view.offset[0] + p.0 * view.zoom,
+                view.offset[1] + p.1 * view.zoom,
+            )
+    };
+    let pts: Vec<egui::Pos2> = match shape {
+        Shape::Rect(a, b) => vec![
+            to_screen(*a),
+            to_screen((b.0, a.1)),
+            to_screen(*b),
+            to_screen((a.0, b.1)),
+            to_screen(*a),
+        ],
+        Shape::Ellipse(a, b) => {
+            let (cx, cy) = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+            let (rx, ry) = ((b.0 - a.0).abs() / 2.0, (b.1 - a.1).abs() / 2.0);
+            (0..=64)
+                .map(|i| {
+                    let t = i as f32 / 64.0 * std::f32::consts::TAU;
+                    to_screen((cx + rx * t.cos(), cy + ry * t.sin()))
+                })
+                .collect()
+        }
+        Shape::Poly(p) => p.iter().map(|q| to_screen(*q)).collect(),
+    };
+    if pts.len() >= 2 {
+        ants(painter, &pts, phase);
     }
 }
 

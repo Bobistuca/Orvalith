@@ -15,11 +15,12 @@ use flate2::Compression;
 use serde::{Deserialize, Serialize};
 
 use crate::blend::BlendMode;
-use crate::document::{Document, Layer, LayerId, LayerKind};
+use crate::document::{Channel, Document, Layer, LayerId, LayerKind};
 use crate::layerops::normalize;
 
 pub const MAGIC: &[u8; 8] = b"ORVALITH";
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
+const MAX_CHANNELS: usize = 256;
 const HEADER_LEN: usize = 20;
 const MAX_MANIFEST: usize = 64 * 1024 * 1024;
 const MAX_LAYERS: usize = 10_000;
@@ -60,6 +61,19 @@ struct Manifest {
     #[serde(default = "default_ppi")]
     ppi: f32,
     layers: Vec<LayerEntry>,
+    /// Versão 3: canais alfa auxiliares (seleções salvas).
+    #[serde(default)]
+    channels: Vec<ChannelEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ChannelEntry {
+    id: u64,
+    name: String,
+    offset: u64,
+    stored_len: u64,
+    raw_len: u64,
+    crc32: u32,
 }
 
 fn default_ppi() -> f32 {
@@ -150,6 +164,24 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
         });
         blob.extend_from_slice(&packed);
     }
+    let mut channel_entries = Vec::with_capacity(doc.channels.len());
+    for c in &doc.channels {
+        let mut enc = ZlibEncoder::new(Vec::new(), Compression::new(3));
+        enc.write_all(&c.mask)
+            .map_err(|e| OrvaError::Corrupt(e.to_string()))?;
+        let packed = enc
+            .finish()
+            .map_err(|e| OrvaError::Corrupt(e.to_string()))?;
+        channel_entries.push(ChannelEntry {
+            id: c.id,
+            name: c.name.clone(),
+            offset: blob.len() as u64,
+            stored_len: packed.len() as u64,
+            raw_len: c.mask.len() as u64,
+            crc32: crc32fast::hash(&c.mask),
+        });
+        blob.extend_from_slice(&packed);
+    }
     let manifest = Manifest {
         format: "orvalith-project".into(),
         app_version: env!("CARGO_PKG_VERSION").into(),
@@ -158,6 +190,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
         height: doc.height,
         ppi: doc.ppi,
         layers: entries,
+        channels: channel_entries,
     };
     let json = serde_json::to_vec(&manifest).map_err(|e| OrvaError::Corrupt(e.to_string()))?;
     let mut out = Vec::with_capacity(HEADER_LEN + json.len() + blob.len());
@@ -220,8 +253,35 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         return Err(OrvaError::Corrupt("resolução inválida".into()));
     }
 
+    if manifest.channels.len() > MAX_CHANNELS {
+        return Err(OrvaError::TooLarge("canais demais".into()));
+    }
     let blob = &bytes[manifest_end..];
     let mut total: u64 = 0;
+    let channel_len = u64::from(manifest.width) * u64::from(manifest.height);
+    for c in &manifest.channels {
+        if c.raw_len != channel_len {
+            return Err(OrvaError::Corrupt(format!(
+                "tamanho do canal \"{}\"",
+                c.name
+            )));
+        }
+        total = total.saturating_add(c.raw_len);
+        if total > MAX_TOTAL_PIXEL_BYTES {
+            return Err(OrvaError::TooLarge(
+                "canais e camadas grandes demais".into(),
+            ));
+        }
+        if c.offset
+            .checked_add(c.stored_len)
+            .is_none_or(|end| end > blob.len() as u64)
+        {
+            return Err(OrvaError::Corrupt(format!(
+                "canal fora do arquivo: \"{}\"",
+                c.name
+            )));
+        }
+    }
     let mut seen = HashSet::new();
     for e in &manifest.layers {
         let is_group = e.kind == EntryKind::Group;
@@ -314,13 +374,32 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         layers.push(layer);
     }
     let layers = normalize(layers);
-    Ok(Document::from_parts(
+    let mut channels = Vec::with_capacity(manifest.channels.len());
+    for c in &manifest.channels {
+        let packed = &blob[c.offset as usize..(c.offset + c.stored_len) as usize];
+        let mut mask = Vec::with_capacity(c.raw_len as usize);
+        ZlibDecoder::new(packed)
+            .take(c.raw_len + 1)
+            .read_to_end(&mut mask)
+            .map_err(|err| OrvaError::Corrupt(format!("canal \"{}\": {err}", c.name)))?;
+        if mask.len() as u64 != c.raw_len || crc32fast::hash(&mask) != c.crc32 {
+            return Err(OrvaError::Corrupt(format!("canal \"{}\"", c.name)));
+        }
+        channels.push(Channel {
+            id: c.id,
+            name: c.name.clone(),
+            mask: std::sync::Arc::new(mask),
+        });
+    }
+    let mut doc = Document::from_parts(
         manifest.name,
         manifest.width,
         manifest.height,
         manifest.ppi,
         layers,
-    ))
+    );
+    doc.channels = channels;
+    Ok(doc)
 }
 
 #[cfg(test)]
@@ -413,6 +492,31 @@ mod tests {
             (0.5, 1.0, BlendMode::Normal, true)
         );
         assert_eq!(l.pixel(0, 0), Some([5, 6, 7, 255]));
+    }
+
+    #[test]
+    fn saved_selection_channels_roundtrip_and_are_validated() {
+        let mut doc = Document::new("c", 5, 4, Some([1, 2, 3, 255])).unwrap();
+        let mask: Vec<u8> = (0..20).map(|i| (i * 12) as u8).collect();
+        doc.channels.push(Channel {
+            id: 7,
+            name: "Céu".into(),
+            mask: std::sync::Arc::new(mask.clone()),
+        });
+        let bytes = write(&doc).unwrap();
+        let back = read(&bytes).unwrap();
+        assert_eq!(back.channels.len(), 1);
+        assert_eq!(
+            (back.channels[0].id, back.channels[0].name.as_str()),
+            (7, "Céu")
+        );
+        assert_eq!(*back.channels[0].mask, mask);
+        assert_eq!(back.new_channel_id(), 8);
+        // Corrupção no final do blob (canal) é detectada.
+        let mut bad = bytes.clone();
+        let last = bad.len() - 1;
+        bad[last] ^= 0xFF;
+        assert!(read(&bad).is_err());
     }
 
     #[test]

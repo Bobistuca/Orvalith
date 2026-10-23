@@ -3,14 +3,14 @@ type: formato
 status: ativo
 tags: [orvalith, formato]
 ---
-# Formato de projeto `.orva` (versão atual: 2; lê 1 e 2)
+# Formato de projeto `.orva` (versão atual: 3; lê 1, 2 e 3)
 
 Implementação: [orva.rs](../crates/orvalith-core/src/orva.rs). Decisão: [[docs/decisions/0002-orva-container]].
 
 | Offset | Tamanho | Conteúdo |
 |---|---|---|
 | 0 | 8 | Magic `ORVALITH` |
-| 8 | 4 | Versão do formato (u32 LE) — atual: 2 |
+| 8 | 4 | Versão do formato (u32 LE) — atual: 3 |
 | 12 | 4 | Tamanho do manifesto em bytes (u32 LE) |
 | 16 | 4 | CRC32 do manifesto (u32 LE) |
 | 20 | N | Manifesto JSON UTF-8 |
@@ -21,6 +21,9 @@ Implementação: [orva.rs](../crates/orvalith-core/src/orva.rs). Decisão: [[doc
 
 ## Versão 2 (Estágio 4)
 Cada entrada de `layers[]` ganha: `kind` (`raster`/`group`), `parent` (ID do grupo pai), `blend` (snake_case, ex. `linear_dodge`, `pass_through`), `fill`, `lock_pixels`, `lock_alpha`, `lock_position`, `expanded`. Grupos têm `width = height = raw_len = 0` e nenhum recurso. Ausentes em v1 → padrões (raster, raiz, normal, preenchimento 1). Ao ler, a lista é normalizada em pré-ordem (pais desconhecidos ou ciclos viram itens da raiz). A ordem da lista é de baixo para cima.
+
+## Versão 3 (Estágio 5)
+`channels[]` no manifesto: canais alfa auxiliares (seleções salvas) com `id`, `name`, `offset`/`stored_len`, `raw_len` (= largura × altura do documento) e `crc32`; cada canal é um fluxo zlib de 1 byte por pixel (255 = selecionado). Validados como as camadas (tamanho exato, limites, CRC, no máximo 256 canais, contam para o limite de 2 GiB). A seleção atual **não** é gravada.
 
 ## Evolução
 Campos desconhecidos no manifesto são ignorados; mudanças incompatíveis incrementam a versão. Um leitor recusa versões maiores que a sua com mensagem clara. Camadas futuras (grupos, máscaras, texto…) entrarão como novos campos/recursos no manifesto.

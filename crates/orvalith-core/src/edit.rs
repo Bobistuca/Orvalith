@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::document::{Document, Layer, LayerId};
+use crate::document::{Channel, Document, Layer, LayerId, Selection};
 use crate::geom::Rect;
 use crate::history::Command;
 
@@ -93,6 +93,57 @@ impl Command for LayersEdit {
                 .sum()
         };
         unique(&self.after, &self.before) + unique(&self.before, &self.after)
+    }
+}
+
+/// Estado de seleção e canais, para desfazer/refazer alterações de seleção.
+#[derive(Clone, Default)]
+pub struct SelectionState {
+    pub selection: Selection,
+    pub channels: Vec<Channel>,
+}
+
+impl SelectionState {
+    pub fn of(doc: &Document) -> Self {
+        Self {
+            selection: doc.selection.clone(),
+            channels: doc.channels.clone(),
+        }
+    }
+}
+
+/// Altera a seleção atual e/ou os canais salvos (o `Arc` evita copiar máscaras).
+pub struct SelectionEdit {
+    label: String,
+    before: SelectionState,
+    after: SelectionState,
+}
+
+impl SelectionEdit {
+    pub fn new(label: &str, before: SelectionState, after: SelectionState) -> Self {
+        Self {
+            label: label.to_string(),
+            before,
+            after,
+        }
+    }
+}
+
+impl Command for SelectionEdit {
+    fn label(&self) -> &str {
+        &self.label
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        doc.selection = self.after.selection.clone();
+        doc.channels = self.after.channels.clone();
+    }
+    fn revert(&mut self, doc: &mut Document) {
+        doc.selection = self.before.selection.clone();
+        doc.channels = self.before.channels.clone();
+    }
+    fn bytes(&self) -> usize {
+        let m = |s: &SelectionState| s.selection.mask.as_ref().map_or(0, |m| m.len());
+        m(&self.before) + m(&self.after)
     }
 }
 

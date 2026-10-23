@@ -4,6 +4,7 @@ mod app;
 mod canvas;
 mod layers_ui;
 mod prefs;
+mod select;
 mod theme;
 mod tools;
 

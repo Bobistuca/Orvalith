@@ -111,6 +111,7 @@ pub struct StrokeSession {
     mode: StrokeMode,
     pencil: bool,
     lock_alpha: bool,
+    selection: Option<Arc<Vec<u8>>>,
     label: &'static str,
     w: u32,
     h: u32,
@@ -140,6 +141,7 @@ impl StrokeSession {
             mode,
             pencil,
             lock_alpha: false,
+            selection: None,
             label,
             w: layer.width,
             h: layer.height,
@@ -156,6 +158,12 @@ impl StrokeSession {
     /// Bloqueio de transparência: pinta só onde já há pixels, sem mudar o alfa; borracha não age.
     pub fn with_alpha_lock(mut self, lock: bool) -> Self {
         self.lock_alpha = lock;
+        self
+    }
+
+    /// Limita (e suaviza) o traço à seleção.
+    pub fn with_selection(mut self, selection: Option<Arc<Vec<u8>>>) -> Self {
+        self.selection = selection;
         self
     }
 
@@ -246,7 +254,11 @@ impl StrokeSession {
                 let i = py as usize * self.w as usize + px as usize;
                 let a = cov * flow;
                 self.coverage[i] = 1.0 - (1.0 - self.coverage[i]) * (1.0 - a);
-                let c = self.coverage[i] * opacity;
+                let sel = self
+                    .selection
+                    .as_ref()
+                    .map_or(1.0, |s| f32::from(s[i]) / 255.0);
+                let c = self.coverage[i] * opacity * sel;
                 let p = i * 4;
                 let dst = [
                     self.snapshot[p],
@@ -468,6 +480,26 @@ mod tests {
         e.add_point(&mut layer, 10.0, 5.0, 1.0);
         e.finish(&mut layer);
         assert_eq!(layer.pixels, before);
+    }
+
+    #[test]
+    fn selection_limits_and_softens_stroke() {
+        let mut layer = Layer::transparent("l", 40, 10);
+        let mut sel = vec![0u8; 400];
+        for y in 0..10 {
+            for x in 20..40 {
+                sel[y * 40 + x] = if x < 25 { 128 } else { 255 };
+            }
+        }
+        let mut s = StrokeSession::begin(&layer, hard(6.0), red(), StrokeMode::Paint, false, "x")
+            .with_selection(Some(std::sync::Arc::new(sel)));
+        s.add_point(&mut layer, 2.0, 5.0, 1.0);
+        s.add_point(&mut layer, 38.0, 5.0, 1.0);
+        s.finish(&mut layer);
+        assert_eq!(layer.pixel(10, 5).unwrap()[3], 0, "fora da seleção");
+        let soft = layer.pixel(22, 5).unwrap()[3];
+        assert!((126..=129).contains(&soft), "{soft}");
+        assert_eq!(layer.pixel(30, 5).unwrap()[3], 255);
     }
 
     #[test]

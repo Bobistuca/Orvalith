@@ -1,18 +1,13 @@
 //! Balde de tinta (preenchimento por tolerância) e gradientes.
 
-use crate::compose::over;
+use crate::compose::{lerp_px, over};
 use crate::document::Layer;
 use crate::edit::PixelPatch;
 use crate::geom::Rect;
 
-fn px(layer: &Layer, x: u32, y: u32) -> [u8; 4] {
-    let i = (y as usize * layer.width as usize + x as usize) * 4;
-    [
-        layer.pixels[i],
-        layer.pixels[i + 1],
-        layer.pixels[i + 2],
-        layer.pixels[i + 3],
-    ]
+fn px(pixels: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
+    let i = (y as usize * w as usize + x as usize) * 4;
+    [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
 }
 
 /// Dois pixels são "iguais" se todos os canais diferem em no máximo `tol`.
@@ -24,9 +19,70 @@ fn similar(a: [u8; 4], b: [u8; 4], tol: u8) -> bool {
     a.iter().zip(&b).all(|(&p, &q)| p.abs_diff(q) <= tol)
 }
 
+/// Região de pixels parecidos com o de (x, y): conectados (4 vizinhos) ou em toda a imagem.
+/// Usada pelo balde de tinta e pela varinha mágica.
+pub fn flood_mask(
+    pixels: &[u8],
+    w: u32,
+    h: u32,
+    x: u32,
+    y: u32,
+    tolerance: u8,
+    contiguous: bool,
+) -> Vec<bool> {
+    let (wu, hu) = (w as usize, h as usize);
+    let mut mask = vec![false; wu * hu];
+    if x >= w || y >= h || pixels.len() != wu * hu * 4 {
+        return mask;
+    }
+    let seed = px(pixels, w, x, y);
+    if contiguous {
+        let mut visited = vec![false; wu * hu];
+        let mut stack = vec![(x, y)];
+        while let Some((sx, sy)) = stack.pop() {
+            if visited[sy as usize * wu + sx as usize] {
+                continue;
+            }
+            if !similar(px(pixels, w, sx, sy), seed, tolerance) {
+                continue;
+            }
+            // Expande a linha horizontal e empilha vizinhos acima e abaixo.
+            let mut l = sx;
+            while l > 0 && similar(px(pixels, w, l - 1, sy), seed, tolerance) {
+                l -= 1;
+            }
+            let mut r = sx;
+            while r + 1 < w && similar(px(pixels, w, r + 1, sy), seed, tolerance) {
+                r += 1;
+            }
+            for cx in l..=r {
+                let idx = sy as usize * wu + cx as usize;
+                visited[idx] = true;
+                mask[idx] = true;
+                if sy > 0 && !visited[(sy as usize - 1) * wu + cx as usize] {
+                    stack.push((cx, sy - 1));
+                }
+                if sy + 1 < h && !visited[(sy as usize + 1) * wu + cx as usize] {
+                    stack.push((cx, sy + 1));
+                }
+            }
+        }
+    } else {
+        for yy in 0..h {
+            for xx in 0..w {
+                if similar(px(pixels, w, xx, yy), seed, tolerance) {
+                    mask[yy as usize * wu + xx as usize] = true;
+                }
+            }
+        }
+    }
+    mask
+}
+
 /// Preenche a região parecida com o pixel (x, y) com `color` (opacidade `opacity`).
 /// `contiguous`: só pixels conectados (4 vizinhos); senão, todos os pixels da camada.
-/// Retorna o retalho de histórico, ou `None` se (x, y) está fora ou nada mudou.
+/// `selection` limita (e suaviza) o efeito. Retorna o retalho de histórico, ou `None`
+/// se (x, y) está fora ou nada mudou.
 #[allow(clippy::too_many_arguments)]
 pub fn bucket_fill(
     layer: &mut Layer,
@@ -37,54 +93,21 @@ pub fn bucket_fill(
     color: [u8; 4],
     opacity: f32,
     lock_alpha: bool,
+    selection: Option<&[u8]>,
 ) -> Option<PixelPatch> {
     if x < 0 || y < 0 || x >= i64::from(layer.width) || y >= i64::from(layer.height) {
         return None;
     }
-    let (x, y) = (x as u32, y as u32);
     let (w, h) = (layer.width as usize, layer.height as usize);
-    let seed = px(layer, x, y);
-    let mut mask = vec![false; w * h];
-    if contiguous {
-        let mut visited = vec![false; w * h];
-        let mut stack = vec![(x, y)];
-        while let Some((sx, sy)) = stack.pop() {
-            if visited[sy as usize * w + sx as usize] {
-                continue;
-            }
-            if !similar(px(layer, sx, sy), seed, tolerance) {
-                continue;
-            }
-            // Expande a linha horizontal e empilha vizinhos acima e abaixo.
-            let mut l = sx;
-            while l > 0 && similar(px(layer, l - 1, sy), seed, tolerance) {
-                l -= 1;
-            }
-            let mut r = sx;
-            while r + 1 < layer.width && similar(px(layer, r + 1, sy), seed, tolerance) {
-                r += 1;
-            }
-            for cx in l..=r {
-                let idx = sy as usize * w + cx as usize;
-                visited[idx] = true;
-                mask[idx] = true;
-                if sy > 0 && !visited[(sy as usize - 1) * w + cx as usize] {
-                    stack.push((cx, sy - 1));
-                }
-                if sy + 1 < layer.height && !visited[(sy as usize + 1) * w + cx as usize] {
-                    stack.push((cx, sy + 1));
-                }
-            }
-        }
-    } else {
-        for yy in 0..layer.height {
-            for xx in 0..layer.width {
-                if similar(px(layer, xx, yy), seed, tolerance) {
-                    mask[yy as usize * w + xx as usize] = true;
-                }
-            }
-        }
-    }
+    let mask = flood_mask(
+        &layer.pixels,
+        layer.width,
+        layer.height,
+        x as u32,
+        y as u32,
+        tolerance,
+        contiguous,
+    );
     let before = layer.pixels.clone();
     let alpha = (f32::from(color[3]) * opacity.clamp(0.0, 1.0))
         .round()
@@ -94,22 +117,30 @@ pub fn bucket_fill(
     let pixels = layer.pixels_mut();
     for yy in 0..h {
         for xx in 0..w {
-            if mask[yy * w + xx] {
-                let i = (yy * w + xx) * 4;
-                let dst = [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]];
-                let mut out = over(src, dst, 1.0);
-                if lock_alpha {
-                    out = if dst[3] == 0 {
-                        dst
-                    } else {
-                        [out[0], out[1], out[2], dst[3]]
-                    };
-                }
-                if out != dst {
-                    pixels[i..i + 4].copy_from_slice(&out);
-                    let r = Rect::new(xx as u32, yy as u32, 1, 1);
-                    bounds = Some(bounds.map_or(r, |b| b.union(r)));
-                }
+            if !mask[yy * w + xx] {
+                continue;
+            }
+            let sel = selection.map_or(255, |s| s[yy * w + xx]);
+            if sel == 0 {
+                continue;
+            }
+            let i = (yy * w + xx) * 4;
+            let dst = [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]];
+            let mut out = over(src, dst, 1.0);
+            if sel < 255 {
+                out = lerp_px(dst, out, f32::from(sel) / 255.0);
+            }
+            if lock_alpha {
+                out = if dst[3] == 0 {
+                    dst
+                } else {
+                    [out[0], out[1], out[2], dst[3]]
+                };
+            }
+            if out != dst {
+                pixels[i..i + 4].copy_from_slice(&out);
+                let r = Rect::new(xx as u32, yy as u32, 1, 1);
+                bounds = Some(bounds.map_or(r, |b| b.union(r)));
             }
         }
     }
@@ -161,7 +192,13 @@ impl Gradient {
 
     /// Desenha o gradiente sobre `original` (pixels da camada antes do gradiente) escrevendo em
     /// `layer`. Retorna `false` (sem alterar nada) se início e fim coincidem.
-    pub fn render(&self, layer: &mut Layer, original: &[u8], lock_alpha: bool) -> bool {
+    pub fn render(
+        &self,
+        layer: &mut Layer,
+        original: &[u8],
+        lock_alpha: bool,
+        selection: Option<&[u8]>,
+    ) -> bool {
         let len2 = (self.end.0 - self.start.0).powi(2) + (self.end.1 - self.start.1).powi(2);
         if len2.is_nan() || len2 <= 1e-6 || original.len() != layer.pixels.len() {
             return false;
@@ -188,6 +225,14 @@ impl Gradient {
                         [out[0], out[1], out[2], dst[3]]
                     };
                 }
+                if let Some(sel) = selection {
+                    let m = sel[y * w + x];
+                    out = if m == 255 {
+                        out
+                    } else {
+                        lerp_px(dst, out, f32::from(m) / 255.0)
+                    };
+                }
                 pixels[i..i + 4].copy_from_slice(&out);
             }
         }
@@ -212,7 +257,7 @@ mod tests {
     #[test]
     fn contiguous_fill_stops_at_walls() {
         let mut l = two_rooms();
-        let p = bucket_fill(&mut l, 1, 1, 0, true, [255, 0, 0, 255], 1.0, false).unwrap();
+        let p = bucket_fill(&mut l, 1, 1, 0, true, [255, 0, 0, 255], 1.0, false, None).unwrap();
         assert_eq!(l.pixel(0, 0).unwrap(), [255, 0, 0, 255]);
         assert_eq!(l.pixel(4, 5).unwrap(), [255, 0, 0, 255]);
         assert_eq!(l.pixel(5, 3).unwrap(), [0, 0, 0, 255]);
@@ -223,7 +268,7 @@ mod tests {
     #[test]
     fn global_fill_reaches_disconnected_regions() {
         let mut l = two_rooms();
-        bucket_fill(&mut l, 1, 1, 0, false, [255, 0, 0, 255], 1.0, false).unwrap();
+        bucket_fill(&mut l, 1, 1, 0, false, [255, 0, 0, 255], 1.0, false, None).unwrap();
         assert_eq!(l.pixel(9, 5).unwrap(), [255, 0, 0, 255]);
         assert_eq!(l.pixel(5, 0).unwrap(), [0, 0, 0, 255]);
     }
@@ -234,10 +279,10 @@ mod tests {
         l.set_pixel(1, 0, [110, 100, 100, 255]);
         l.set_pixel(2, 0, [160, 100, 100, 255]);
         let mut a = l.clone();
-        bucket_fill(&mut a, 0, 0, 0, true, [0, 0, 255, 255], 1.0, false).unwrap();
+        bucket_fill(&mut a, 0, 0, 0, true, [0, 0, 255, 255], 1.0, false, None).unwrap();
         assert_eq!(a.pixel(1, 0).unwrap(), [110, 100, 100, 255]);
         let mut b = l.clone();
-        bucket_fill(&mut b, 0, 0, 20, true, [0, 0, 255, 255], 1.0, false).unwrap();
+        bucket_fill(&mut b, 0, 0, 20, true, [0, 0, 255, 255], 1.0, false, None).unwrap();
         assert_eq!(b.pixel(1, 0).unwrap(), [0, 0, 255, 255]);
         assert_eq!(b.pixel(2, 0).unwrap(), [160, 100, 100, 255]);
     }
@@ -245,22 +290,44 @@ mod tests {
     #[test]
     fn fills_transparent_area_and_respects_opacity() {
         let mut l = Layer::transparent("l", 3, 3);
-        bucket_fill(&mut l, 1, 1, 0, true, [10, 20, 30, 255], 0.5, false).unwrap();
+        bucket_fill(&mut l, 1, 1, 0, true, [10, 20, 30, 255], 0.5, false, None).unwrap();
         assert_eq!(l.pixel(2, 2).unwrap(), [10, 20, 30, 128]);
     }
 
     #[test]
     fn fill_outside_or_noop_gives_none_and_undo_restores() {
         let mut l = two_rooms();
-        assert!(bucket_fill(&mut l, -1, 0, 0, true, [1, 2, 3, 255], 1.0, false).is_none());
-        assert!(bucket_fill(&mut l, 10, 0, 0, true, [1, 2, 3, 255], 1.0, false).is_none());
+        assert!(bucket_fill(&mut l, -1, 0, 0, true, [1, 2, 3, 255], 1.0, false, None).is_none());
+        assert!(bucket_fill(&mut l, 10, 0, 0, true, [1, 2, 3, 255], 1.0, false, None).is_none());
         // Preencher com a mesma cor não muda nada.
-        assert!(bucket_fill(&mut l, 1, 1, 0, true, [255, 255, 255, 255], 1.0, false).is_none());
+        assert!(bucket_fill(
+            &mut l,
+            1,
+            1,
+            0,
+            true,
+            [255, 255, 255, 255],
+            1.0,
+            false,
+            None
+        )
+        .is_none());
         let mut doc = crate::Document::new("t", 10, 6, None).unwrap();
         doc.layers[0] = two_rooms();
         let original = doc.layers[0].pixels.clone();
         let mut layer = doc.layers[0].clone();
-        let patch = bucket_fill(&mut layer, 8, 2, 0, true, [0, 255, 0, 255], 1.0, false).unwrap();
+        let patch = bucket_fill(
+            &mut layer,
+            8,
+            2,
+            0,
+            true,
+            [0, 255, 0, 255],
+            1.0,
+            false,
+            None,
+        )
+        .unwrap();
         doc.layers[0] = layer;
         let mut h = History::new();
         h.record(&mut doc, Box::new(patch));
@@ -283,7 +350,7 @@ mod tests {
     fn linear_gradient_endpoints_and_midpoint() {
         let mut l = Layer::filled("l", 10, 10, [0, 0, 0, 255]);
         let orig = l.pixels.clone();
-        assert!(grad(GradientKind::Linear, [0, 0, 255, 255]).render(&mut l, &orig, false));
+        assert!(grad(GradientKind::Linear, [0, 0, 255, 255]).render(&mut l, &orig, false, None));
         let first = l.pixel(0, 5).unwrap();
         let last = l.pixel(9, 5).unwrap();
         assert!(first[0] > 240 && first[2] < 15, "{first:?}");
@@ -299,7 +366,7 @@ mod tests {
     fn gradient_to_transparent_keeps_original_at_far_end() {
         let mut l = Layer::filled("l", 10, 10, [0, 255, 0, 255]);
         let orig = l.pixels.clone();
-        grad(GradientKind::Linear, [0, 0, 0, 0]).render(&mut l, &orig, false);
+        grad(GradientKind::Linear, [0, 0, 0, 0]).render(&mut l, &orig, false, None);
         let far = l.pixel(9, 5).unwrap();
         assert!(far[0] < 20 && far[1] > 235 && far[3] == 255, "{far:?}");
         let near = l.pixel(0, 5).unwrap();
@@ -318,14 +385,14 @@ mod tests {
             to: [0, 0, 0, 255],
             opacity: 1.0,
         };
-        assert!(g.render(&mut l, &orig, false));
+        assert!(g.render(&mut l, &orig, false, None));
         assert_eq!(l.pixel(10, 5), l.pixel(10, 15));
         assert_eq!(l.pixel(5, 10), l.pixel(15, 10));
         assert!(l.pixel(10, 10).unwrap()[0] > l.pixel(18, 10).unwrap()[0]);
         let mut d = g;
         d.end = d.start;
         let before = l.pixels.clone();
-        assert!(!d.render(&mut l, &orig, false));
+        assert!(!d.render(&mut l, &orig, false, None));
         assert_eq!(l.pixels, before);
     }
 }
