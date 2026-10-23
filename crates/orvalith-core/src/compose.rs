@@ -1,18 +1,25 @@
 //! Compositor CPU (referência de comportamento). Normal + opacidade, alfa não pré-multiplicado.
 
 use crate::document::Document;
+use crate::geom::Rect;
 
 /// Compõe as camadas visíveis em um buffer RGBA8 (sRGB, alfa não pré-multiplicado).
 pub fn flatten(doc: &Document) -> Vec<u8> {
-    let n = doc.width as usize * doc.height as usize;
-    let mut out = vec![0u8; n * 4];
+    flatten_region(doc, Rect::full(doc.width, doc.height))
+}
+
+/// Compõe apenas `region` (recortada ao documento); o buffer tem `region.w × region.h` pixels.
+pub fn flatten_region(doc: &Document, region: Rect) -> Vec<u8> {
+    let r = region.clamp_to(doc.width, doc.height);
+    let (rw, rh) = (r.w as usize, r.h as usize);
+    let mut out = vec![0u8; rw * rh * 4];
     for layer in doc.layers.iter().filter(|l| l.visible) {
-        let w = layer.width.min(doc.width) as usize;
-        let h = layer.height.min(doc.height) as usize;
-        for y in 0..h {
-            for x in 0..w {
-                let si = (y * layer.width as usize + x) * 4;
-                let di = (y * doc.width as usize + x) * 4;
+        let x_end = r.right().min(layer.width);
+        let y_end = r.bottom().min(layer.height);
+        for y in r.y..y_end {
+            for x in r.x..x_end {
+                let si = (y as usize * layer.width as usize + x as usize) * 4;
+                let di = ((y - r.y) as usize * rw + (x - r.x) as usize) * 4;
                 let src = [
                     layer.pixels[si],
                     layer.pixels[si + 1],
@@ -25,6 +32,15 @@ pub fn flatten(doc: &Document) -> Vec<u8> {
         }
     }
     out
+}
+
+/// Cor composta de um único pixel (todas as camadas visíveis).
+pub fn pixel_at(doc: &Document, x: u32, y: u32) -> Option<[u8; 4]> {
+    if x >= doc.width || y >= doc.height {
+        return None;
+    }
+    let px = flatten_region(doc, Rect::new(x, y, 1, 1));
+    Some([px[0], px[1], px[2], px[3]])
 }
 
 /// Operador "source over" com opacidade da camada, em alfa não pré-multiplicado.
@@ -84,5 +100,27 @@ mod tests {
         top.visible = false;
         doc.layers.push(top);
         assert_eq!(&flatten(&doc)[0..4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn region_matches_full_flatten_and_pixel_at() {
+        let mut doc = Document::new("t", 6, 5, Some([10, 20, 30, 255])).unwrap();
+        let mut top = crate::Layer::transparent("topo", 6, 5);
+        top.set_pixel(3, 2, [200, 0, 0, 128]);
+        top.opacity = 0.5;
+        doc.layers.push(top);
+        let full = flatten(&doc);
+        let reg = flatten_region(&doc, Rect::new(2, 1, 3, 3));
+        for y in 0..3usize {
+            for x in 0..3usize {
+                let fi = ((y + 1) * 6 + (x + 2)) * 4;
+                assert_eq!(
+                    &reg[(y * 3 + x) * 4..(y * 3 + x) * 4 + 4],
+                    &full[fi..fi + 4]
+                );
+            }
+        }
+        assert_eq!(pixel_at(&doc, 3, 2).unwrap(), full[(2 * 6 + 3) * 4..][..4]);
+        assert_eq!(pixel_at(&doc, 6, 0), None);
     }
 }

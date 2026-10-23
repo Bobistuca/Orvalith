@@ -25,4 +25,17 @@ tags: [orvalith, matriz]
 | Indicador de modificado, confirmação ao fechar aba/sair (Salvar/Descartar/Cancelar) | 2 | partial | código | sem teste automatizado de UI |
 | Autosave/recuperação opcional (desligado por padrão), apagar cópias | 2 | partial | `scan_recovery` testado; cópia em thread | autosave e recuperação ao iniciar não exercitados manualmente |
 | Recentes (opcional, apagável) | 2 | partial | testes de `prefs.rs` | — |
-| Demais estágios (3–16) | 3–16 | planned | — | ver [[ROADMAP]] |
+| Pincel e lápis (tamanho, dureza, opacidade, fluxo, espaçamento), traço = 1 ação | 3 | partial | `paint.rs`: sem lacunas em traço rápido, opacidade por traço, fluxo, dureza, lápis sem antisserrilhado, recorte nas bordas, desfazer exato; `tools.rs`: arrasto via ferramenta | uso real com mouse não exercitado; CPU puro (sem medição de desempenho) |
+| Borracha (em camada com transparência) | 3 | partial | `paint.rs` e `tools.rs` testes | — |
+| Suavização do traço configurável | 3 | partial | teste `smoothing_still_reaches_final_point_on_finish` | média exponencial simples; sem estabilizador por corda |
+| Pressão da caneta | 3 | partial | leitura de `Event::Touch.force` e escala de tamanho no núcleo (clamp) | **não verificada com tablet**; mouse sempre 100% |
+| Conta-gotas (composto/camada ativa, Alt = fundo) | 3 | partial | `tools.rs` testes | — |
+| Cores frente/fundo, trocar (X), padrão (D), seletor, amostras (padrão + do usuário) | 3 | partial | `tools.rs`, `prefs.rs` testes | seletor é o do egui (HSV/RGB, sem gerenciamento de cor) |
+| Balde de tinta (tolerância, contíguo/global, opacidade) | 3 | partial | `fill.rs` + `tools.rs` testes | opera na camada ativa; sem seleção/antisserrilhado de borda |
+| Gradientes linear/radial (frente→fundo, frente→transparente, inverter, opacidade) | 3 | partial | `fill.rs` testes (pontas, ponto médio, simetria, degenerado) + Esc cancela | 2 paradas (sem editor de paradas); sem dithering (faixas em 8 bits); histórico guarda a camada inteira |
+| Presets de pincel (padrão + salvos pelo usuário) e amostras persistem | 3 | partial | testes de ida e volta de `prefs.rs` e `paint.rs` | — |
+| Pintura persiste no projeto `.orva` | 3 | partial | teste `painted_pixels_survive_project_roundtrip` | — |
+| Camada ativa + nova camada (desfazível) | 3/4 | partial | `edit.rs` testes | sem renomear/excluir/reordenar (Estágio 4) |
+| Atualização parcial da textura (só a região pintada) | 3 | partial | `compose::flatten_region` testado | custo não medido |
+| Orçamento de memória do histórico (256 MiB) | 3 | partial | teste `budget_drops_oldest_actions` | descarta as ações mais antigas sem aviso |
+| Demais estágios (4–16) | 4–16 | planned | — | ver [[ROADMAP]] |

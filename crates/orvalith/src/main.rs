@@ -4,6 +4,7 @@ mod app;
 mod canvas;
 mod prefs;
 mod theme;
+mod tools;
 
 fn main() -> eframe::Result<()> {
     let prefs = prefs::Prefs::load();

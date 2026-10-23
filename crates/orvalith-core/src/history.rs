@@ -10,18 +10,45 @@ pub trait Command {
     fn apply(&mut self, doc: &mut Document);
     /// Reverte o comando.
     fn revert(&mut self, doc: &mut Document);
+    /// Memória aproximada retida pelo comando (para o orçamento do histórico).
+    fn bytes(&self) -> usize {
+        0
+    }
 }
+
+/// Orçamento padrão de memória do histórico de um documento.
+pub const DEFAULT_BUDGET: usize = 256 * 1024 * 1024;
 
 /// Pilha de desfazer/refazer. Cada comando é uma ação atômica do usuário.
 #[derive(Default)]
 pub struct History {
     done: Vec<Box<dyn Command>>,
     undone: Vec<Box<dyn Command>>,
+    budget: Option<usize>,
 }
 
 impl History {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            budget: Some(DEFAULT_BUDGET),
+            ..Self::default()
+        }
+    }
+
+    /// Define o orçamento de memória; as ações mais antigas são descartadas ao excedê-lo.
+    pub fn with_budget(budget: usize) -> Self {
+        Self {
+            budget: Some(budget),
+            ..Self::default()
+        }
+    }
+
+    fn enforce_budget(&mut self) {
+        let Some(budget) = self.budget else { return };
+        let total = |v: &Vec<Box<dyn Command>>| v.iter().map(|c| c.bytes()).sum::<usize>();
+        while self.done.len() > 1 && total(&self.done) + total(&self.undone) > budget {
+            self.done.remove(0);
+        }
     }
 
     /// Executa um comando, registra-o e descarta a pilha de refazer.
@@ -30,6 +57,7 @@ impl History {
         doc.touch();
         self.done.push(cmd);
         self.undone.clear();
+        self.enforce_budget();
     }
 
     /// Registra um comando cuja alteração **já foi aplicada** (ex.: após arrastar um controle).
@@ -37,6 +65,7 @@ impl History {
         doc.touch();
         self.done.push(cmd);
         self.undone.clear();
+        self.enforce_budget();
     }
 
     pub fn can_undo(&self) -> bool {
@@ -144,6 +173,27 @@ mod tests {
         h.execute(&mut doc, set(1, [1, 1, 1, 255]));
         assert!(!h.can_redo());
         assert_eq!(h.labels().len(), 1);
+    }
+
+    #[test]
+    fn budget_drops_oldest_actions() {
+        struct Big;
+        impl Command for Big {
+            fn label(&self) -> &str {
+                "Big"
+            }
+            fn apply(&mut self, _: &mut Document) {}
+            fn revert(&mut self, _: &mut Document) {}
+            fn bytes(&self) -> usize {
+                100
+            }
+        }
+        let mut doc = Document::new("t", 2, 2, None).unwrap();
+        let mut h = History::with_budget(250);
+        for _ in 0..5 {
+            h.execute(&mut doc, Box::new(Big));
+        }
+        assert_eq!(h.labels().len(), 2);
     }
 
     #[test]

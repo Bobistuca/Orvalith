@@ -7,12 +7,13 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 use eframe::egui::{self, Key, Modifiers};
-use orvalith_core::edit::{SetOpacity, SetVisible};
-use orvalith_core::{Document, LayerId};
+use orvalith_core::edit::{AddLayer, SetOpacity, SetVisible};
+use orvalith_core::{Document, Layer, LayerId};
 
 use crate::canvas::{self, OpenDoc, ViewCmd};
 use crate::prefs::Prefs;
 use crate::theme;
+use crate::tools::{Tool, ToolState};
 
 struct NewDocForm {
     width: u32,
@@ -43,6 +44,11 @@ enum Action {
     View(ViewCmd),
     NextTab,
     ClearRecent,
+    Tool(Tool),
+    SwapColors,
+    DefaultColors,
+    BrushSize(f32),
+    CancelTool,
 }
 
 pub struct OrvalithApp {
@@ -62,6 +68,8 @@ pub struct OrvalithApp {
     prefs_open: bool,
     cursor_doc: Option<[f32; 2]>,
     last_title: String,
+    tools: ToolState,
+    layer_counter: u32,
     last_autosave: Instant,
     autosave_tx: mpsc::Sender<String>,
     autosave_rx: mpsc::Receiver<String>,
@@ -73,6 +81,7 @@ impl OrvalithApp {
     pub fn new(prefs: Prefs) -> Self {
         let (autosave_tx, autosave_rx) = mpsc::channel();
         let recovery_found = io::scan_recovery(prefs.recovery_path());
+        let tools = ToolState::new(prefs.brush, prefs.fg, prefs.bg);
         Self {
             docs: Vec::new(),
             active: 0,
@@ -87,6 +96,8 @@ impl OrvalithApp {
             prefs_open: false,
             cursor_doc: None,
             last_title: String::new(),
+            tools,
+            layer_counter: 1,
             last_autosave: Instant::now(),
             autosave_tx,
             autosave_rx,
@@ -187,6 +198,15 @@ impl OrvalithApp {
                     self.active = (self.active + 1) % self.docs.len();
                 }
             }
+            Action::Tool(t) => self.tools.set_tool(t),
+            Action::SwapColors => self.tools.swap_colors(),
+            Action::DefaultColors => self.tools.default_colors(),
+            Action::BrushSize(f) => self.tools.resize_brush(f),
+            Action::CancelTool => {
+                if let Some(o) = self.docs.get_mut(self.active) {
+                    self.tools.cancel(o);
+                }
+            }
             Action::ClearRecent => {
                 self.prefs.recent.clear();
                 self.prefs.save();
@@ -203,7 +223,7 @@ impl OrvalithApp {
         let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
         ctx.input_mut(|i| {
             // Variantes com Shift primeiro: Ctrl+X casaria também com Ctrl+Shift+X.
-            let table: [Shortcut; 17] = [
+            let table: [Shortcut; 28] = [
                 (cs, Key::S, || Action::SaveAs),
                 (cs, Key::E, || Action::Export),
                 (cs, Key::Z, || Action::Redo),
@@ -221,6 +241,20 @@ impl OrvalithApp {
                 (C, Key::Minus, || Action::View(ViewCmd::ZoomOut)),
                 (C, Key::F4, || Action::Close),
                 (Modifiers::NONE, Key::F5, || Action::View(ViewCmd::Fit)),
+                // Ferramentas (Shift+G antes de G).
+                (Modifiers::SHIFT, Key::G, || Action::Tool(Tool::Gradient)),
+                (Modifiers::NONE, Key::B, || Action::Tool(Tool::Brush)),
+                (Modifiers::NONE, Key::N, || Action::Tool(Tool::Pencil)),
+                (Modifiers::NONE, Key::E, || Action::Tool(Tool::Eraser)),
+                (Modifiers::NONE, Key::I, || Action::Tool(Tool::Eyedropper)),
+                (Modifiers::NONE, Key::G, || Action::Tool(Tool::Bucket)),
+                (Modifiers::NONE, Key::X, || Action::SwapColors),
+                (Modifiers::NONE, Key::D, || Action::DefaultColors),
+                (Modifiers::NONE, Key::OpenBracket, || Action::BrushSize(0.9)),
+                (Modifiers::NONE, Key::CloseBracket, || {
+                    Action::BrushSize(1.1)
+                }),
+                (Modifiers::NONE, Key::Escape, || Action::CancelTool),
             ];
             for (m, k, make) in table {
                 if i.consume_key(m, k) {
@@ -245,7 +279,7 @@ impl eframe::App for OrvalithApp {
                 self.quit_prompt = true;
             } else {
                 self.remove_all_own_recovery();
-                self.prefs.save();
+                self.persist_tools();
             }
         }
         for f in ctx.input(|i| i.raw.dropped_files.clone()) {
@@ -407,15 +441,60 @@ impl eframe::App for OrvalithApp {
                             ui.separator();
                             ui.label(format!("x: {}  y: {}", p[0].floor(), p[1].floor()));
                         }
+                        if let Some(n) = &self.tools.notice {
+                            ui.separator();
+                            ui.label(egui::RichText::new(n).color(theme::COPPER));
+                        }
                     }
                 });
             });
+
+            egui::Panel::top("options").show(root, |ui| {
+                if self.tools.options_ui(ui, &mut self.prefs.brush_presets) {
+                    self.persist_tools();
+                }
+            });
+
+            egui::Panel::left("tools")
+                .resizable(false)
+                .default_size(110.0)
+                .show(root, |ui| {
+                    for t in Tool::ALL {
+                        let r = ui
+                            .selectable_label(self.tools.tool == t, t.label())
+                            .on_hover_text(format!("{} ({})", t.label(), t.shortcut()));
+                        if r.clicked() {
+                            actions.push(Action::Tool(t));
+                        }
+                    }
+                    ui.separator();
+                    if self.tools.colors_ui(ui, &mut self.prefs.swatches) {
+                        self.persist_tools();
+                    }
+                });
 
             egui::Panel::right("layers")
                 .resizable(true)
                 .default_size(230.0)
                 .show(root, |ui| {
-                    ui.heading("Camadas");
+                    ui.horizontal(|ui| {
+                        ui.heading("Camadas");
+                        if ui.button("Nova camada").clicked() {
+                            if let Some(open) = self.docs.get_mut(self.active) {
+                                self.layer_counter += 1;
+                                let layer = Layer::transparent(
+                                    format!("Camada {}", self.layer_counter),
+                                    open.doc.width,
+                                    open.doc.height,
+                                );
+                                let id = layer.id;
+                                let at = open.active_idx().map_or(0, |i| i + 1);
+                                open.history
+                                    .execute(&mut open.doc, Box::new(AddLayer::new(layer, at)));
+                                open.active_layer = id;
+                            }
+                        }
+                    });
                     ui.separator();
                     if let Some(open) = self.docs.get_mut(self.active) {
                         layers_panel(ui, open);
@@ -429,7 +508,9 @@ impl eframe::App for OrvalithApp {
                     Action::View(c) => Some(*c),
                     _ => None,
                 });
-                self.cursor_doc = canvas::show(ui, open, cmd, space_down);
+                let out = canvas::show(ui, open, cmd, space_down, self.tools.overlay());
+                self.cursor_doc = out.hover;
+                self.tools.handle(open, &out);
             } else {
                 self.cursor_doc = None;
                 ui.vertical_centered(|ui| {
@@ -478,8 +559,11 @@ fn layers_panel(ui: &mut egui::Ui, open: &mut OpenDoc) {
         doc,
         history,
         opacity_drag,
+        active_layer,
         ..
     } = open;
+    let active_id = *active_layer;
+    let mut select: Option<LayerId> = None;
     let mut vis_change: Option<(LayerId, bool, bool)> = None;
     let mut commit: Option<(LayerId, f32, f32)> = None;
     let mut preview = false;
@@ -489,7 +573,12 @@ fn layers_panel(ui: &mut egui::Ui, open: &mut OpenDoc) {
             if ui.checkbox(&mut v, "").on_hover_text("Visível").changed() {
                 vis_change = Some((layer.id, layer.visible, v));
             }
-            ui.label(&layer.name);
+            if ui
+                .selectable_label(layer.id == active_id, &layer.name)
+                .clicked()
+            {
+                select = Some(layer.id);
+            }
         });
         let old = layer.opacity;
         let mut pct = old * 100.0;
@@ -515,6 +604,9 @@ fn layers_panel(ui: &mut egui::Ui, open: &mut OpenDoc) {
         }
         ui.separator();
     }
+    if let Some(id) = select {
+        *active_layer = id;
+    }
     if preview {
         doc.touch();
     }
@@ -527,6 +619,14 @@ fn layers_panel(ui: &mut egui::Ui, open: &mut OpenDoc) {
 }
 
 impl OrvalithApp {
+    /// Copia o estado das ferramentas (pincel, cores) para as preferências e grava.
+    fn persist_tools(&mut self) {
+        self.prefs.brush = self.tools.brush;
+        self.prefs.fg = self.tools.fg;
+        self.prefs.bg = self.tools.bg;
+        self.prefs.save();
+    }
+
     fn update_title(&mut self, ctx: &egui::Context) {
         let title = match self.docs.get(self.active) {
             Some(d) => format!(

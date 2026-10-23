@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use orvalith_core::paint::{BrushParams, BrushPreset};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -21,6 +22,12 @@ pub struct Prefs {
     /// Lista de arquivos recentes (opcional e apagável).
     pub recent_enabled: bool,
     pub recent: Vec<String>,
+    /// Último pincel e cores usados, presets e amostras do usuário.
+    pub brush: BrushParams,
+    pub fg: [u8; 4],
+    pub bg: [u8; 4],
+    pub brush_presets: Vec<BrushPreset>,
+    pub swatches: Vec<[u8; 4]>,
 }
 
 pub const MAX_RECENT: usize = 8;
@@ -36,6 +43,11 @@ impl Default for Prefs {
             recovery_dir: None,
             recent_enabled: true,
             recent: Vec::new(),
+            brush: BrushParams::default(),
+            fg: [0, 0, 0, 255],
+            bg: [255, 255, 255, 255],
+            brush_presets: Vec::new(),
+            swatches: Vec::new(),
         }
     }
 }
@@ -57,6 +69,9 @@ impl Prefs {
         self.window_size[1] = self.window_size[1].clamp(500.0, 8000.0);
         self.autosave_secs = self.autosave_secs.clamp(15, 3600);
         self.recent.truncate(MAX_RECENT);
+        self.brush = self.brush.sanitized();
+        self.brush_presets.truncate(200);
+        self.swatches.truncate(200);
         self
     }
 
@@ -145,6 +160,17 @@ mod tests {
             autosave_enabled: true,
             autosave_secs: 60,
             recent: vec!["a.orva".into()],
+            brush: BrushParams {
+                size: 33.0,
+                hardness: 0.4,
+                ..BrushParams::default()
+            },
+            fg: [10, 20, 30, 255],
+            brush_presets: vec![BrushPreset {
+                name: "Meu pincel".into(),
+                params: BrushParams::default(),
+            }],
+            swatches: vec![[1, 2, 3, 255]],
             ..Prefs::default()
         };
         prefs.save_to(&p).unwrap();
