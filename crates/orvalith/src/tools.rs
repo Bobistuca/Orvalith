@@ -15,6 +15,7 @@ use orvalith_core::{compose, DocumentId, Layer, LayerId};
 
 use crate::canvas::{CanvasOut, OpenDoc, Overlay};
 use crate::geometry::{self, GeoState};
+use crate::retouchui::RetouchState;
 use crate::select::{is_selection_tool, SelectState};
 use crate::vectool::VecState;
 
@@ -37,10 +38,15 @@ pub enum Tool {
     Eyedropper,
     Bucket,
     Gradient,
+    Clone,
+    SpotHeal,
+    Patch,
+    RedEye,
+    Retouch,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 17] = [
+    pub const ALL: [Tool; 22] = [
         Tool::Move,
         Tool::Text,
         Tool::Shape,
@@ -58,6 +64,11 @@ impl Tool {
         Tool::Eyedropper,
         Tool::Bucket,
         Tool::Gradient,
+        Tool::Clone,
+        Tool::SpotHeal,
+        Tool::Patch,
+        Tool::RedEye,
+        Tool::Retouch,
     ];
 
     pub fn label(self) -> &'static str {
@@ -79,6 +90,11 @@ impl Tool {
             Tool::Eyedropper => "Conta-gotas",
             Tool::Bucket => "Balde de tinta",
             Tool::Gradient => "Gradiente",
+            Tool::Clone => "Carimbo de clone",
+            Tool::SpotHeal => "Correção pontual",
+            Tool::Patch => "Remendo",
+            Tool::RedEye => "Olhos vermelhos",
+            Tool::Retouch => "Pincel de retoque",
         }
     }
 
@@ -101,6 +117,11 @@ impl Tool {
             Tool::Eyedropper => "I",
             Tool::Bucket => "G",
             Tool::Gradient => "Shift+G",
+            Tool::Clone => "S",
+            Tool::SpotHeal => "J",
+            Tool::Patch => "H",
+            Tool::RedEye => "Y",
+            Tool::Retouch => "R",
         }
     }
 
@@ -164,6 +185,7 @@ pub struct ToolState {
     pub sel: SelectState,
     pub geo: GeoState,
     pub vec: VecState,
+    pub ret: RetouchState,
     preset_name: String,
     active: Option<Active>,
 }
@@ -249,6 +271,7 @@ impl ToolState {
             sel: SelectState::default(),
             geo: GeoState::default(),
             vec: VecState::default(),
+            ret: RetouchState::default(),
             preset_name: String::new(),
             active: None,
         }
@@ -256,7 +279,7 @@ impl ToolState {
 
     /// Há um traço ou gradiente em andamento (troca de ferramenta/aba é adiada).
     pub fn is_busy(&self) -> bool {
-        self.active.is_some() || self.geo.busy() || self.vec.busy()
+        self.active.is_some() || self.geo.busy() || self.vec.busy() || self.ret.busy()
     }
 
     /// Enter tem algo a confirmar (transformação, recorte ou laço poligonal).
@@ -333,13 +356,19 @@ impl ToolState {
             shape: self.sel.shape(self.tool, hover),
             tool_cursor: true,
             snap_pointer: is_selection_tool(self.tool),
-            brush_radius_doc: self.tool.paints_strokes().then_some(self.brush.size / 2.0),
+            brush_radius_doc: self
+                .tool
+                .paints_strokes()
+                .then_some(self.brush.size / 2.0)
+                .or_else(|| self.ret.brush_radius(self.tool)),
+            points: self.ret.source_marker(self.tool),
             ..Overlay::default()
         }
     }
 
     /// Cancela um gradiente em andamento restaurando os pixels originais (tecla Esc).
     pub fn cancel(&mut self, open: &mut OpenDoc) {
+        self.ret.cancel(open);
         self.vec.cancel_text(open);
         self.vec.cancel_pen();
         self.geo.cancel(open);
@@ -422,6 +451,13 @@ impl ToolState {
         }
         match self.tool {
             Tool::Crop => self.geo.crop.handle(out),
+            Tool::Clone | Tool::SpotHeal | Tool::Patch | Tool::RedEye | Tool::Retouch => {
+                if let Some(n) = self.ret.handle(self.tool, open, out) {
+                    self.notice = Some(n);
+                } else if out.pressed.is_some() {
+                    self.notice = None;
+                }
+            }
             Tool::Text => self.vec.handle_text(open, out, self.fg),
             Tool::Shape => self.vec.handle_shape(open, out, self.fg, self.bg),
             Tool::Pen => self.vec.handle_pen(open, out, self.fg, self.bg),
@@ -945,6 +981,9 @@ impl ToolState {
                 Tool::Shape => self.vec.shape_options_ui(ui),
                 Tool::Pen => self.vec.pen_options_ui(ui),
                 Tool::Node => VecState::node_options_ui(ui),
+                Tool::Clone | Tool::SpotHeal | Tool::Patch | Tool::RedEye | Tool::Retouch => {
+                    self.ret.options_ui(ui, self.tool)
+                }
                 Tool::Crop => {
                     ui.label("Arraste a área; alças ajustam; Enter recorta (a área pode passar das bordas); Esc cancela. Camadas ficam recortadas à tela.");
                 }

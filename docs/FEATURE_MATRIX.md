@@ -105,4 +105,12 @@ tags: [orvalith, matriz]
 | Prévia na tela convertida do perfil do documento para sRGB | 9 | partial | `color.rs` `Preview` teste | presume tela sRGB (sem perfil do monitor); desligável no diálogo Perfil de cor |
 | 16 bits, ponto flutuante, Lab, CMYK, prova de cores (soft proof) | 9 | planned | — | não implementados; declarado |
 | `.orva` v7: ajustes e perfil persistem; ajuste inválido vira camada transparente; bytes do perfil preservados | 9 | partial | `orva.rs` testes de ida e volta, ajuste hostil, CRC do perfil, leitura de v6 | ver [[docs/ORVA_FORMAT]] |
-| Demais estágios (10–16) | 10–16 | planned | — | ver [[ROADMAP]] |
+| Filtros: gaussiano, caixa, movimento, máscara de nitidez, nitidez, reduzir ruído (bilateral), mediana, ruído com semente, pixelar, relevo, bordas, redemoinho, ondulação, esferizar | 10 | partial | `filter.rs` testes (imagem plana estável, sem halos em transparência, energia do impulso, bordas, semente reprodutível, cancelamento, seleção, parâmetros hostis) | `f32` pré-multiplicado (≈16 B/px de trabalho); sem cache incremental; relevo/bordas devolvem cinza; esferizar/redemoinho/ondulação são distorções básicas centradas na camada |
+| Prévia de filtro em segundo plano, cancelável, respeitando a seleção, 1 ação de desfazer | 10 | partial | `filterui.rs` testes (thread, reiniciar ao mudar parâmetros, cancelar restaura, seleção, bloqueios) | a janela não foi exercitada com mouse; só há um filtro por vez |
+| Carimbo de clone (origem por Alt+clique, alinhado, camada ativa ou composta) e pincel de correção | 10 | partial | `retouch.rs` (cópia por deslocamento, sem halos, seleção, correção mantém o tom do local), `retouchui.rs` (traço = 1 ação, Esc cancela) | correção usa a média do anel ao redor (corrige tom, não gradientes fortes); sem amostragem de várias origens |
+| Correção pontual (origem automática pelo anel mais parecido) e remendo (seleção + arrasto) | 10 | partial | `retouch.rs` testes (mancha em gradiente, remendo) | busca em 64 candidatos, sem sintetizar textura; sem prévia do remendo ao arrastar |
+| Olhos vermelhos | 10 | partial | `retouch.rs` teste (pupila vermelha escurece, íris marrom não) | heurística de cor; sem detecção de olhos |
+| Pincéis de desfocar, nitidez, borrar, subexpor, superexpor (sombras/meios-tons/realces) e esponja | 10 | partial | `retouch.rs` testes por pincel e borrar arrastando cor | sem pressão; alfa bloqueado restaurado só ao fim do traço |
+| Preenchimento por textura / inpainting clássico | 10 | planned | — | não implementado (a correção pontual copia de uma origem, não é inpainting) |
+| Liquify (deformar, suavizar, reconstruir) | 10 | planned | — | subetapa 10.2 |
+| Demais estágios (11–16) | 11–16 | planned | — | ver [[ROADMAP]] |

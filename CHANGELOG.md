@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Estágio 10.1: menu Filtro (14 filtros clássicos com prévia em segundo plano, cancelável e respeitando a seleção) e ferramentas de retoque (carimbo de clone/correção, correção pontual, remendo, olhos vermelhos, desfocar/nitidez/borrar/subexpor/superexpor/esponja). Liquify fica para a subetapa 10.2.
 - Estágio 9: 16 ajustes de cor (destrutivos com prévia e como camadas de ajuste editáveis), histogramas, perfis ICC (preservar, atribuir, converter, prévia sRGB, embutir/converter na exportação) com `moxcms`; `.orva` v7. Sem 16 bits/Lab/CMYK/prova de cores.
 - Estágio 8: texto de ponto/parágrafo editável (fontes do sistema, Unicode, fallback, fonte ausente), formas com preenchimento/gradiente/traço, caneta Bézier e seleção de nós, booleanas, caminho → seleção, máscara vetorial e rasterização explícita; `.orva` v6 (`source`, máscara vetorial). Texto em caminho e vertical ficam planejados.
 - Estágio 7: máscaras de camada (criar, pintar, inverter, ativar, aplicar, excluir, vincular, densidade, pena, visão isolada), máscaras de recorte em cadeia, painel de canais (R/G/B e canais alfa salvos, editar pela máscara rápida), refinar borda; `.orva` v5.

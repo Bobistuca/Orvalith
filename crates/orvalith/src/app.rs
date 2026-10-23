@@ -17,6 +17,7 @@ use selops::SelCmd;
 
 use crate::adjustui::{self, AdjSession, ColorAction, ColorDialog, HistState};
 use crate::canvas::{self, RulerUnit, ViewCmd, ViewOpts};
+use crate::filterui::{self, FilterSession};
 use crate::geometry::TMode;
 use crate::layers_ui::{self, LayerCmd};
 use crate::prefs::Prefs;
@@ -71,6 +72,7 @@ enum Action {
     Confirm,
     Geo(GeoCmd),
     AdjStart(usize),
+    FilterStart(usize),
     AdjLayer(usize),
     ToggleHist,
     ColorDlg,
@@ -105,6 +107,7 @@ pub struct OrvalithApp {
     recovery_found: Vec<PathBuf>,
     /// Ajuste destrutivo em andamento: (id do documento, sessão).
     adj_session: Option<(u64, AdjSession)>,
+    filter_session: Option<(u64, FilterSession)>,
     hist: HistState,
     color_dlg: ColorDialog,
 }
@@ -138,6 +141,7 @@ impl OrvalithApp {
             autosave_rx,
             recovery_found,
             adj_session: None,
+            filter_session: None,
             hist: HistState::default(),
             color_dlg: ColorDialog::default(),
         }
@@ -264,16 +268,24 @@ impl OrvalithApp {
                         layers_ui::run(open, cmd, &mut self.layer_clip, &mut self.layer_counter);
                 }
             }
+            Action::FilterStart(kind) => {
+                if self.tools.is_busy() {
+                    return;
+                }
+                self.end_edit_sessions();
+                if let Some(o) = self.docs.get(self.active) {
+                    match FilterSession::begin(o, kind) {
+                        Ok(s) => self.filter_session = Some((o.doc.id.0, s)),
+                        Err(e) => self.tools.notice = Some(e),
+                    }
+                }
+            }
             Action::AdjStart(kind) => {
                 if self.tools.is_busy() {
                     return;
                 }
+                self.end_edit_sessions();
                 if let Some(o) = self.docs.get_mut(self.active) {
-                    if let Some((did, mut s)) = self.adj_session.take() {
-                        if did == o.doc.id.0 {
-                            adjustui::cancel_session(&mut s, o);
-                        }
-                    }
                     match AdjSession::begin(o, kind) {
                         Ok(s) => self.adj_session = Some((o.doc.id.0, s)),
                         Err(e) => self.tools.notice = Some(e),
@@ -342,7 +354,12 @@ impl OrvalithApp {
         ctx.input_mut(|i| {
             // Variantes com Shift primeiro: Ctrl+X casaria também com Ctrl+Shift+X.
             let ca = Modifiers::COMMAND.plus(Modifiers::ALT);
-            let table: [Shortcut; 65] = [
+            let table: [Shortcut; 70] = [
+                (Modifiers::NONE, Key::S, || Action::Tool(Tool::Clone)),
+                (Modifiers::NONE, Key::J, || Action::Tool(Tool::SpotHeal)),
+                (Modifiers::NONE, Key::H, || Action::Tool(Tool::Patch)),
+                (Modifiers::NONE, Key::Y, || Action::Tool(Tool::RedEye)),
+                (Modifiers::NONE, Key::R, || Action::Tool(Tool::Retouch)),
                 (Modifiers::NONE, Key::T, || Action::Tool(Tool::Text)),
                 (Modifiers::NONE, Key::U, || Action::Tool(Tool::Shape)),
                 (Modifiers::NONE, Key::P, || Action::Tool(Tool::Pen)),
@@ -682,6 +699,19 @@ impl eframe::App for OrvalithApp {
                     ui.separator();
                     ui.small("Combinar usa as formas selecionadas (Ctrl+clique):");
                     ui.small("a mais baixa é a base; a mais alta é o operando.");
+                });
+                ui.menu_button("Filtro", |ui| {
+                    for (i, name) in orvalith_core::filter::KINDS.iter().enumerate() {
+                        if ui
+                            .add_enabled(has_doc, egui::Button::new(format!("{name}…")))
+                            .clicked()
+                        {
+                            actions.push(Action::FilterStart(i));
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    ui.small("Os filtros agem na camada ativa (e na seleção).");
                 });
                 ui.menu_button("Ajustes", |ui| {
                     for (i, name) in orvalith_core::adjust::KINDS.iter().enumerate() {
@@ -1453,7 +1483,21 @@ fn text_editor_ui(
 }
 
 impl OrvalithApp {
-    /// Janelas de ajuste destrutivo, histograma e perfil de cor.
+    /// Encerra (cancelando) qualquer ajuste ou filtro destrutivo em andamento.
+    fn end_edit_sessions(&mut self) {
+        if let Some((did, mut s)) = self.adj_session.take() {
+            if let Some(o) = self.docs.iter_mut().find(|d| d.doc.id.0 == did) {
+                adjustui::cancel_session(&mut s, o);
+            }
+        }
+        if let Some((did, mut s)) = self.filter_session.take() {
+            if let Some(o) = self.docs.iter_mut().find(|d| d.doc.id.0 == did) {
+                filterui::cancel_session(&mut s, o);
+            }
+        }
+    }
+
+    /// Janelas de ajuste destrutivo, filtros, histograma e perfil de cor.
     fn adjust_windows(&mut self, ctx: &egui::Context) {
         let active_id = self.docs.get(self.active).map(|d| d.doc.id.0);
         // Uma sessão destrutiva pertence a um documento: trocar de aba a cancela.
@@ -1464,6 +1508,22 @@ impl OrvalithApp {
                         adjustui::cancel_session(&mut s, o);
                     }
                 }
+            }
+        }
+        if let Some((did, _)) = &self.filter_session {
+            if Some(*did) != active_id {
+                if let Some((did, mut s)) = self.filter_session.take() {
+                    if let Some(o) = self.docs.iter_mut().find(|d| d.doc.id.0 == did) {
+                        filterui::cancel_session(&mut s, o);
+                    }
+                }
+            }
+        }
+        if let (Some((_, s)), Some(open)) =
+            (self.filter_session.as_mut(), self.docs.get_mut(self.active))
+        {
+            if filterui::session_window(ctx, s, open) {
+                self.filter_session = None;
             }
         }
         if let (Some((_, s)), Some(open)) =

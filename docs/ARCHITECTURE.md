@@ -42,5 +42,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Ajustes e cor (Estágio 9)
 [adjust.rs](../crates/orvalith-core/src/adjust.rs) (`Adjustment`, `Prepared` com LUT para ajustes por canal), [adjops.rs](../crates/orvalith-core/src/adjops.rs) (camada de ajuste, aplicação destrutiva com seleção), [histogram.rs](../crates/orvalith-core/src/histogram.rs) e [color.rs](../crates/orvalith-core/src/color.rs) (`moxcms`: inspeção, conversão RGBA8, `Preview`, `ColorEdit`). `Layer.adjustment` marca camadas de ajuste; `compose.rs` aplica o ajuste ao que já está no buffer (alfa intacto) com opacidade, modo, máscara e recorte (no recorte age só sobre a base). `Document.icc` é o perfil atribuído (`None` = sRGB). UI: [adjustui.rs](../crates/orvalith/src/adjustui.rs) (editor compartilhado, sessão destrutiva com prévia, histograma, diálogo de perfil); a prévia de cor converte a região composta para sRGB em `render_composite`.
 
+## Filtros e retoque (Estágio 10.1)
+[filter.rs](../crates/orvalith-core/src/filter.rs) (`Filter`, `apply`/`apply_selected` com `AtomicBool` de cancelamento; desfoques e mediana em alfa pré-multiplicado) e [retouch.rs](../crates/orvalith-core/src/retouch.rs) (toques de clone/correção, correção pontual, remendo, olhos vermelhos, pincéis de efeito, `Walker` de espaçamento). UI: [filterui.rs](../crates/orvalith/src/filterui.rs) (sessão: thread que calcula a prévia, reinicia ao mudar parâmetros, descarta resultados cancelados; Aplicar só quando o resultado bate com os parâmetros) e [retouchui.rs](../crates/orvalith/src/retouchui.rs) (ferramentas de traço/clique; um traço = uma ação `LayersEdit`).
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

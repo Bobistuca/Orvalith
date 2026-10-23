@@ -21,6 +21,9 @@ fmt, clippy, 112 testes e build release OK; smoke test abre/fecha. Manual: duas 
 ## Estágio 3 (2026-10-23)
 fmt, clippy, 70 testes e build release OK; smoke test abre/fecha. Manual: Ctrl+N → B (pincel): arrastar rápido em círculos, conferir ausência de lacunas e que Ctrl+Z desfaz o traço inteiro; [ e ] mudam o tamanho; E apaga; I amostra (Alt = fundo); G balde (Tolerância/Contíguo); Shift+G gradiente (Esc cancela durante o arrasto); X troca cores, D restaura; salvar preset e reiniciar o app; salvar `.orva`, reabrir e comparar a pintura; testar em zoom 25%, 100% e 800%.
 
+## Estágio 10.1 (2026-10-23)
+fmt, clippy -D warnings, 309 testes (núcleo 219 + app 90) e build release OK; smoke test: abre e fecha. Manual: abrir uma foto; Filtro → Desfoque gaussiano… (arrastar o raio; "Calculando…"; Cancelar deve restaurar; Aplicar + Ctrl+Z); fazer uma seleção e repetir; S: Alt+clique numa origem e pintar; marcar "Correção"; J numa mancha; selecionar e H arrastando até uma área boa; Y num olho vermelho; R com cada pincel.
+
 ## Estágio 9 (2026-10-23)
 fmt, clippy -D warnings, 284 testes (núcleo 201 + app 83) e build release OK; smoke test: abre e fecha. Manual: abrir uma imagem; Ajustes → Níveis… (arrastar, Aplicar, Ctrl+Z); Ajustes → Nova camada de ajuste → Curvas (arrastar pontos no painel da camada; ocultar a camada), salvar `.orva`, reabrir e editar de novo; Ajustes → Histograma; abrir PNG/JPEG com perfil Display P3/Adobe RGB (aviso), Ajustes → Perfil de cor (atribuir x converter), exportar com cada opção de perfil.
 

@@ -3,9 +3,11 @@
 mod adjustui;
 mod app;
 mod canvas;
+mod filterui;
 mod geometry;
 mod layers_ui;
 mod prefs;
+mod retouchui;
 mod select;
 mod theme;
 mod tools;

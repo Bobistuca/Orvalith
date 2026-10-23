@@ -19,7 +19,7 @@ Estados: planned · in progress · partial · validated · blocked. Detalhes de 
 | 7 | Máscaras, recorte, canais | 5 | partial |
 | 8 | Texto, formas e caminhos | 6, 7 | partial |
 | 9 | Ajustes e gerenciamento de cor | 4 | partial |
-| 10 | Retoque e filtros clássicos | 5, 9 | planned |
+| 10 | Retoque e filtros clássicos | 5, 9 | partial |
 | 11 | Efeitos, recursos editáveis, objetos embutidos | 8, 9 | planned |
 | 12 | Imagens, PDF, PSD/PSB, .pcraft | 4, 7, 8 | planned |
 | 13 | Animação e linha do tempo | 4 | planned |
