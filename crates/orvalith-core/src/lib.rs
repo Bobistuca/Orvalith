@@ -8,6 +8,7 @@ pub mod adjust;
 pub mod blend;
 pub mod color;
 pub mod compose;
+pub mod comps;
 pub mod docops;
 pub mod document;
 pub mod edit;

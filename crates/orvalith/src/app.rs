@@ -17,6 +17,7 @@ use selops::SelCmd;
 
 use crate::adjustui::{self, AdjSession, ColorAction, ColorDialog, HistState};
 use crate::canvas::{self, RulerUnit, ViewCmd, ViewOpts};
+use crate::compsui::{self, CompsUi};
 use crate::filterui::{self, FilterSession};
 use crate::geometry::TMode;
 use crate::layers_ui::{self, LayerCmd};
@@ -75,6 +76,7 @@ enum Action {
     FilterStart(usize),
     AdjLayer(usize),
     ToggleHist,
+    ToggleComps,
     PlaceObject(bool),
     ColorDlg,
 }
@@ -110,6 +112,7 @@ pub struct OrvalithApp {
     adj_session: Option<(u64, AdjSession)>,
     filter_session: Option<(u64, FilterSession)>,
     hist: HistState,
+    comps_ui: CompsUi,
     color_dlg: ColorDialog,
 }
 
@@ -145,6 +148,7 @@ impl OrvalithApp {
             adj_session: None,
             filter_session: None,
             hist: HistState::default(),
+            comps_ui: CompsUi::default(),
             color_dlg: ColorDialog::default(),
         }
     }
@@ -304,6 +308,7 @@ impl OrvalithApp {
                 }
             }
             Action::ToggleHist => self.hist.open = !self.hist.open,
+            Action::ToggleComps => self.comps_ui.open = !self.comps_ui.open,
             Action::PlaceObject(linked) => self.place_object(linked),
             Action::ColorDlg => self.color_dlg.open = !self.color_dlg.open,
             Action::Select(c) => self.run_select(c),
@@ -684,6 +689,14 @@ impl eframe::App for OrvalithApp {
                     }
                 });
                 ui.menu_button("Objetos", |ui| {
+                    if ui
+                        .add_enabled(has_doc, egui::Button::new("Composições de camadas…"))
+                        .clicked()
+                    {
+                        actions.push(Action::ToggleComps);
+                        ui.close();
+                    }
+                    ui.separator();
                     if ui
                         .add_enabled(
                             has_doc,
@@ -1583,6 +1596,13 @@ impl OrvalithApp {
             if adjustui::session_window(ctx, s, open) {
                 self.adj_session = None;
             }
+        }
+        let mut comps_notice = None;
+        if let Some(open) = self.docs.get_mut(self.active) {
+            comps_notice = compsui::comps_window(ctx, &mut self.comps_ui, open);
+        }
+        if let Some(n) = comps_notice {
+            self.tools.notice = Some(n);
         }
         if let Some(open) = self.docs.get(self.active) {
             adjustui::histogram_window(ctx, &mut self.hist, open);

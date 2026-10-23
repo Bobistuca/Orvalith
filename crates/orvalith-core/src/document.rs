@@ -10,6 +10,7 @@ use std::sync::{Arc, OnceLock};
 use crate::adjust::Adjustment;
 use crate::blend::BlendMode;
 use crate::color::IccProfile;
+use crate::comps::Comp;
 use crate::object::SmartObject;
 use crate::source::LayerSource;
 use crate::style::Effect;
@@ -351,6 +352,8 @@ pub struct Document {
     pub guides: Vec<Guide>,
     /// Perfil ICC atribuído aos pixels (`None` = sRGB presumido).
     pub icc: Option<IccProfile>,
+    /// Composições de camadas (estados visuais nomeados).
+    pub comps: Vec<Comp>,
     /// Há alterações não salvas.
     pub modified: bool,
     /// Incrementa a cada edição; descarta resultados assíncronos obsoletos.
@@ -389,6 +392,7 @@ impl Document {
             channels: Vec::new(),
             guides: Vec::new(),
             icc: None,
+            comps: Vec::new(),
             modified: false,
             revision: 0,
         })
@@ -410,6 +414,7 @@ impl Document {
             channels: Vec::new(),
             guides: Vec::new(),
             icc: None,
+            comps: Vec::new(),
             modified: false,
             revision: 0,
         }

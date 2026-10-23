@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::adjust::Adjustment;
 use crate::blend::BlendMode;
 use crate::color::{IccProfile, MAX_PROFILE_BYTES};
+use crate::comps::{comps_sane, Comp};
 use crate::document::{Channel, Document, Guide, Layer, LayerId, LayerKind, LayerMask};
 use crate::layerops::normalize;
 use crate::object::{link_allowed, SmartFilter, SmartObject, MAX_FILTERS};
@@ -25,7 +26,7 @@ use crate::style::{effects_sane, Effect};
 use crate::vector::ShapeSpec;
 
 pub const MAGIC: &[u8; 8] = b"ORVALITH";
-pub const CURRENT_VERSION: u32 = 9;
+pub const CURRENT_VERSION: u32 = 10;
 const MAX_CHANNELS: usize = 256;
 const HEADER_LEN: usize = 20;
 const MAX_MANIFEST: usize = 64 * 1024 * 1024;
@@ -76,6 +77,9 @@ struct Manifest {
     /// Versão 7: perfil ICC atribuído ao documento.
     #[serde(default)]
     icc: Option<IccEntry>,
+    /// Versão 10: composições de camadas (JSON lido de forma tolerante).
+    #[serde(default)]
+    comps: Vec<serde_json::Value>,
 }
 
 /// Perfil ICC (versão 7): recurso zlib com os bytes do perfil.
@@ -380,6 +384,11 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
             })
             .collect(),
         icc: icc_entry,
+        comps: doc
+            .comps
+            .iter()
+            .filter_map(|c| serde_json::to_value(c).ok())
+            .collect(),
     };
     let json = serde_json::to_vec(&manifest).map_err(|e| OrvaError::Corrupt(e.to_string()))?;
     let mut out = Vec::with_capacity(HEADER_LEN + json.len() + blob.len());
@@ -731,6 +740,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
     }
     let layers = normalize(layers);
     let manifest_guides = manifest.guides;
+    let manifest_comps = manifest.comps.clone();
     let icc = match &manifest.icc {
         Some(ie) => {
             if ie.raw_len > MAX_PROFILE_BYTES as u64
@@ -784,6 +794,15 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
     );
     doc.channels = channels;
     doc.icc = icc;
+    let comps: Vec<Comp> = manifest_comps
+        .iter()
+        .filter_map(|v| serde_json::from_value::<Comp>(v.clone()).ok())
+        .collect();
+    doc.comps = if comps_sane(&comps, doc.layers.len()) {
+        comps
+    } else {
+        Vec::new()
+    };
     doc.guides = manifest_guides
         .iter()
         .filter(|g| g.pos.is_finite())
@@ -1245,5 +1264,25 @@ mod tests {
         let last = broken.len() - 1;
         broken[last] ^= 0x55;
         assert!(read(&broken).is_err());
+    }
+    #[test]
+    fn layer_comps_roundtrip_and_oversized_lists_are_dropped() {
+        let mut doc = Document::new("c", 4, 4, Some([1, 2, 3, 255])).unwrap();
+        doc.layers.push(Layer::filled("b", 4, 4, [9, 9, 9, 255]));
+        doc.comps.push(crate::comps::capture(&doc, "Versão A"));
+        doc.layers[1].visible = false;
+        doc.comps.push(crate::comps::capture(&doc, "Versão B"));
+        let bytes = write(&doc).unwrap();
+        let back = read(&bytes).unwrap();
+        assert_eq!(back.comps, doc.comps);
+        assert!(crate::comps::matches(&back, &back.comps[1]));
+        // Lista exagerada (mais de 64) é descartada sem erro.
+        let mut many = doc.clone();
+        many.comps = vec![many.comps[0].clone(); 70];
+        assert!(read(&write(&many).unwrap()).unwrap().comps.is_empty());
+        // Arquivo da versão 9 abre sem composições.
+        let mut old = bytes;
+        old[8..12].copy_from_slice(&9u32.to_le_bytes());
+        let _ = read(&old).unwrap();
     }
 }

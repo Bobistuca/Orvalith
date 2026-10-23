@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Estágio 11.3: composições de camadas; `.orva` v10.
 - Estágio 11.2: objetos inteligentes (embutidos e vinculados) com transformação reversível, filtros inteligentes com máscara própria; `.orva` v9.
 - Estágio 11.1: estilos de camada (9 efeitos), camadas de preenchimento (cor, gradiente, padrão), predefinições de estilo; `.orva` v8.
 - Estágio 10.2: Liquify (deformar, suavizar, reconstruir) com campo de deslocamento, prévia ao vivo, Enter/Esc e uma ação de desfazer.

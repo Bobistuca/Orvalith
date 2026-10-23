@@ -54,5 +54,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Objetos inteligentes (Estágio 11.2)
 [object.rs](../crates/orvalith-core/src/object.rs): `SmartObject` (original + centro/escala/giro + filtros + máscara) renderiza sempre a partir do original (filtros no espaço do original, depois transformação bilinear em alfa pré-multiplicado). `Layer.object` + `Layer::rerender` mantêm os pixels da camada; `vecops::translate_content` move texto/forma/objeto sem perda. UI: [objectui.rs](../crates/orvalith/src/objectui.rs); diálogos de arquivo em `app.rs`.
 
+## Composições (Estágio 11.3)
+[comps.rs](../crates/orvalith-core/src/comps.rs): `Comp` (estado visual por camada), `capture`/`apply`/`matches` e `CompsEdit` (comando de histórico). UI: [compsui.rs](../crates/orvalith/src/compsui.rs).
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

@@ -43,6 +43,9 @@ Cada camada ganha `styles` opcional (lista JSON de efeitos: tipo, ativo e parâm
 ## Versão 9 (Estágio 11.2)
 Cada camada ganha `object` opcional: `orig_w`/`orig_h`, `cx`/`cy`/`sx`/`sy`/`rot`, `link` (caminho), `data` (original RGBA8 como recurso zlib; só em objetos **embutidos**), `filters` (lista JSON lida de forma tolerante, máx. 16) e `mask` (recurso zlib do tamanho do documento). Validação antes de alocar: lados 1..=32768, `raw_len == orig_w·orig_h·4`, soma no limite de 2 GiB, recursos dentro do arquivo, CRC. Vínculos de rede/URL (`\\`, `//`, `://`) são descartados; sem original nem vínculo válido o objeto é ignorado (a camada fica raster com os pixels gravados). Objetos vinculados são relidos do disco ao abrir (`object::resolve_links`); arquivo ausente gera aviso e a camada mantém a aparência gravada.
 
+## Versão 10 (Estágio 11.3)
+O manifesto ganha `comps`: lista (máx. 64) de composições `{name, states:[{layer, visible, opacity, fill, blend, styles:[bool]}]}` lida de forma tolerante; entradas inválidas ou listas fora dos limites são descartadas.
+
 ## Evolução
 Campos desconhecidos no manifesto são ignorados; mudanças incompatíveis incrementam a versão. Um leitor recusa versões maiores que a sua com mensagem clara. Camadas futuras (grupos, máscaras, texto…) entrarão como novos campos/recursos no manifesto.
 

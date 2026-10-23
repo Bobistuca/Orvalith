@@ -3,6 +3,7 @@
 mod adjustui;
 mod app;
 mod canvas;
+mod compsui;
 mod filterui;
 mod geometry;
 mod layers_ui;
