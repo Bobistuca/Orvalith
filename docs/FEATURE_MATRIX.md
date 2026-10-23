@@ -112,5 +112,5 @@ tags: [orvalith, matriz]
 | Olhos vermelhos | 10 | partial | `retouch.rs` teste (pupila vermelha escurece, íris marrom não) | heurística de cor; sem detecção de olhos |
 | Pincéis de desfocar, nitidez, borrar, subexpor, superexpor (sombras/meios-tons/realces) e esponja | 10 | partial | `retouch.rs` testes por pincel e borrar arrastando cor | sem pressão; alfa bloqueado restaurado só ao fim do traço |
 | Preenchimento por textura / inpainting clássico | 10 | planned | — | não implementado (a correção pontual copia de uma origem, não é inpainting) |
-| Liquify (deformar, suavizar, reconstruir) | 10 | planned | — | subetapa 10.2 |
+| Liquify: deformar, suavizar e reconstruir (campo de deslocamento sobre o original; Enter aplica, Esc cancela; respeita a seleção) | 10 | partial | `liquify.rs` (identidade exata, empurrar, reconstruir volta ao original, suavizar, seleção, sem halos), `liquifyui.rs` (sessão, 1 ação, Esc, reconstruir, bloqueios) | só a camada ativa; sem inchar/contrair/congelar/máscara de congelamento; campo ocupa 8 B/px; renderização parcial não foi medida em imagens grandes; mouse real não exercitado |
 | Demais estágios (11–16) | 11–16 | planned | — | ver [[ROADMAP]] |

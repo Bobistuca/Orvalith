@@ -6,6 +6,7 @@ mod canvas;
 mod filterui;
 mod geometry;
 mod layers_ui;
+mod liquifyui;
 mod prefs;
 mod retouchui;
 mod select;

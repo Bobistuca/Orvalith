@@ -15,6 +15,7 @@ use orvalith_core::{compose, DocumentId, Layer, LayerId};
 
 use crate::canvas::{CanvasOut, OpenDoc, Overlay};
 use crate::geometry::{self, GeoState};
+use crate::liquifyui::LiquifyState;
 use crate::retouchui::RetouchState;
 use crate::select::{is_selection_tool, SelectState};
 use crate::vectool::VecState;
@@ -43,10 +44,11 @@ pub enum Tool {
     Patch,
     RedEye,
     Retouch,
+    Liquify,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 22] = [
+    pub const ALL: [Tool; 23] = [
         Tool::Move,
         Tool::Text,
         Tool::Shape,
@@ -69,6 +71,7 @@ impl Tool {
         Tool::Patch,
         Tool::RedEye,
         Tool::Retouch,
+        Tool::Liquify,
     ];
 
     pub fn label(self) -> &'static str {
@@ -95,6 +98,7 @@ impl Tool {
             Tool::Patch => "Remendo",
             Tool::RedEye => "Olhos vermelhos",
             Tool::Retouch => "Pincel de retoque",
+            Tool::Liquify => "Liquify",
         }
     }
 
@@ -122,6 +126,7 @@ impl Tool {
             Tool::Patch => "H",
             Tool::RedEye => "Y",
             Tool::Retouch => "R",
+            Tool::Liquify => "Shift+R",
         }
     }
 
@@ -186,6 +191,7 @@ pub struct ToolState {
     pub geo: GeoState,
     pub vec: VecState,
     pub ret: RetouchState,
+    pub liq: LiquifyState,
     preset_name: String,
     active: Option<Active>,
 }
@@ -272,6 +278,7 @@ impl ToolState {
             geo: GeoState::default(),
             vec: VecState::default(),
             ret: RetouchState::default(),
+            liq: LiquifyState::default(),
             preset_name: String::new(),
             active: None,
         }
@@ -279,12 +286,20 @@ impl ToolState {
 
     /// Há um traço ou gradiente em andamento (troca de ferramenta/aba é adiada).
     pub fn is_busy(&self) -> bool {
-        self.active.is_some() || self.geo.busy() || self.vec.busy() || self.ret.busy()
+        self.active.is_some()
+            || self.geo.busy()
+            || self.vec.busy()
+            || self.ret.busy()
+            || self.liq.busy()
     }
 
     /// Enter tem algo a confirmar (transformação, recorte ou laço poligonal).
     pub fn needs_confirm(&self) -> bool {
-        self.geo.busy() || self.geo.crop.active() || self.sel.active() || self.vec.busy()
+        self.geo.busy()
+            || self.geo.crop.active()
+            || self.sel.active()
+            || self.vec.busy()
+            || self.liq.busy()
     }
 
     pub fn set_tool(&mut self, tool: Tool) {
@@ -360,7 +375,8 @@ impl ToolState {
                 .tool
                 .paints_strokes()
                 .then_some(self.brush.size / 2.0)
-                .or_else(|| self.ret.brush_radius(self.tool)),
+                .or_else(|| self.ret.brush_radius(self.tool))
+                .or_else(|| (self.tool == Tool::Liquify).then(|| self.liq.brush_radius())),
             points: self.ret.source_marker(self.tool),
             ..Overlay::default()
         }
@@ -369,6 +385,7 @@ impl ToolState {
     /// Cancela um gradiente em andamento restaurando os pixels originais (tecla Esc).
     pub fn cancel(&mut self, open: &mut OpenDoc) {
         self.ret.cancel(open);
+        self.liq.cancel(open);
         self.vec.cancel_text(open);
         self.vec.cancel_pen();
         self.geo.cancel(open);
@@ -409,6 +426,10 @@ impl ToolState {
 
     /// Confirma a operação em andamento (Enter): fecha o laço poligonal.
     pub fn confirm(&mut self, open: &mut OpenDoc) {
+        if self.liq.busy() {
+            self.liq.commit(open);
+            return;
+        }
         if self.vec.busy() {
             let (fg, bg) = (self.fg, self.bg);
             self.vec.commit_all(open, fg, bg);
@@ -456,6 +477,11 @@ impl ToolState {
                     self.notice = Some(n);
                 } else if out.pressed.is_some() {
                     self.notice = None;
+                }
+            }
+            Tool::Liquify => {
+                if let Some(n) = self.liq.handle(open, out) {
+                    self.notice = Some(n);
                 }
             }
             Tool::Text => self.vec.handle_text(open, out, self.fg),
@@ -983,6 +1009,9 @@ impl ToolState {
                 Tool::Node => VecState::node_options_ui(ui),
                 Tool::Clone | Tool::SpotHeal | Tool::Patch | Tool::RedEye | Tool::Retouch => {
                     self.ret.options_ui(ui, self.tool)
+                }
+                Tool::Liquify => {
+                    self.liq.options_ui(ui, open_for_text);
                 }
                 Tool::Crop => {
                     ui.label("Arraste a área; alças ajustam; Enter recorta (a área pode passar das bordas); Esc cancela. Camadas ficam recortadas à tela.");

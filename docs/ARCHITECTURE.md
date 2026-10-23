@@ -45,5 +45,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Filtros e retoque (Estágio 10.1)
 [filter.rs](../crates/orvalith-core/src/filter.rs) (`Filter`, `apply`/`apply_selected` com `AtomicBool` de cancelamento; desfoques e mediana em alfa pré-multiplicado) e [retouch.rs](../crates/orvalith-core/src/retouch.rs) (toques de clone/correção, correção pontual, remendo, olhos vermelhos, pincéis de efeito, `Walker` de espaçamento). UI: [filterui.rs](../crates/orvalith/src/filterui.rs) (sessão: thread que calcula a prévia, reinicia ao mudar parâmetros, descarta resultados cancelados; Aplicar só quando o resultado bate com os parâmetros) e [retouchui.rs](../crates/orvalith/src/retouchui.rs) (ferramentas de traço/clique; um traço = uma ação `LayersEdit`).
 
+## Liquify (Estágio 10.2)
+[liquify.rs](../crates/orvalith-core/src/liquify.rs): `Field` (deslocamento por pixel) com `push`, `smooth`, `reconstruct` e `render_region` (mapeamento inverso bilinear em alfa pré-multiplicado, sempre a partir do original). UI: [liquifyui.rs](../crates/orvalith/src/liquifyui.rs) mantém a sessão (original + campo) até Enter (uma ação `LayersEdit`) ou Esc.
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

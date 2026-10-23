@@ -19,6 +19,7 @@ pub mod histogram;
 pub mod history;
 pub mod imageio;
 pub mod layerops;
+pub mod liquify;
 pub mod maskops;
 pub mod orva;
 pub mod paint;

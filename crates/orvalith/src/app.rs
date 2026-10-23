@@ -324,6 +324,7 @@ impl OrvalithApp {
             }
             Action::Tool(t) => {
                 if let Some(o) = self.docs.get_mut(self.active) {
+                    self.tools.liq.commit(o);
                     let (fg, bg) = (self.tools.fg, self.tools.bg);
                     self.tools.vec.commit_all(o, fg, bg);
                 }
@@ -354,7 +355,8 @@ impl OrvalithApp {
         ctx.input_mut(|i| {
             // Variantes com Shift primeiro: Ctrl+X casaria também com Ctrl+Shift+X.
             let ca = Modifiers::COMMAND.plus(Modifiers::ALT);
-            let table: [Shortcut; 70] = [
+            let table: [Shortcut; 71] = [
+                (Modifiers::SHIFT, Key::R, || Action::Tool(Tool::Liquify)),
                 (Modifiers::NONE, Key::S, || Action::Tool(Tool::Clone)),
                 (Modifiers::NONE, Key::J, || Action::Tool(Tool::SpotHeal)),
                 (Modifiers::NONE, Key::H, || Action::Tool(Tool::Patch)),
