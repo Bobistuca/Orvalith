@@ -80,7 +80,20 @@ impl OrvalithApp {
                     Orient::FlipH => "Espelhar tela horizontalmente",
                     Orient::FlipV => "Espelhar tela verticalmente",
                 };
-                geometry::orient(open, o, label)
+                let r = geometry::orient(open, o, label);
+                if r.is_none() {
+                    self.tools
+                        .geo
+                        .recorded
+                        .push(orvalith_core::actions::Step::Orient(match o {
+                            Orient::Cw90 => orvalith_core::actions::Turn::Cw90,
+                            Orient::Ccw90 => orvalith_core::actions::Turn::Ccw90,
+                            Orient::Rot180 => orvalith_core::actions::Turn::Rot180,
+                            Orient::FlipH => orvalith_core::actions::Turn::FlipH,
+                            Orient::FlipV => orvalith_core::actions::Turn::FlipV,
+                        }));
+                }
+                r
             }
             GeoCmd::CropToSelection => geometry::crop_to_selection(open).or_else(|| {
                 open.doc

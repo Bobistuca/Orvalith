@@ -19,6 +19,7 @@ struct Job {
 }
 
 pub struct FilterSession {
+    pub applied: bool,
     layer: LayerId,
     original: Arc<Vec<u8>>,
     pub filter: Filter,
@@ -131,6 +132,7 @@ impl FilterSession {
             return Err(msg.replace("ajustar", "filtrar"));
         }
         Ok(Self {
+            applied: false,
             layer: l.id,
             original: l.pixels.clone(),
             filter: Filter::neutral(kind),
@@ -281,6 +283,7 @@ pub fn session_window(ctx: &egui::Context, s: &mut FilterSession, open: &mut Ope
     }
     if ok && s.ready() {
         s.commit(open);
+        s.applied = true;
         return true;
     }
     false

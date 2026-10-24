@@ -5,8 +5,8 @@ tags: [orvalith, continuidade]
 ---
 # Continuidade
 
-- **Estágio atual:** 15.1 (comandos, atalhos, paleta, preferências) concluída como *partial*; faltam 15.2 (ações/macros e lote) e 15.3 (predefinições, importação GPL/GGR, espaços de trabalho, instantâneos, ajuda e exemplos).
-- **Funciona:** fmt, clippy -D warnings, 404 testes (núcleo 298 + app 106) e build release OK; app abre/fecha (smoke). Texto/formas/caneta/nós só com eventos sintéticos e testes de núcleo. Pintura com mouse real NÃO foi exercitada (só testes de núcleo e de `ToolState::handle` com eventos sintéticos). Abrir/salvar/exportar via diálogos nativos NÃO foi exercitado manualmente; janela abre e fecha gravando `config.json`; canvas com zoom/pan/abas/status. Interação com mouse não foi exercitada automaticamente.
+- **Estágio atual:** 15.1 e 15.2 (ações e lote) concluídas como *partial*; falta 15.3 (predefinições, importação GPL/GGR, espaços de trabalho, instantâneos, ajuda e exemplos).
+- **Funciona:** fmt, clippy -D warnings, 408 testes (núcleo 301 + app 107) e build release OK; app abre/fecha (smoke). Texto/formas/caneta/nós só com eventos sintéticos e testes de núcleo. Pintura com mouse real NÃO foi exercitada (só testes de núcleo e de `ToolState::handle` com eventos sintéticos). Abrir/salvar/exportar via diálogos nativos NÃO foi exercitado manualmente; janela abre e fecha gravando `config.json`; canvas com zoom/pan/abas/status. Interação com mouse não foi exercitada automaticamente.
 - **Arquivos-chave:** `crates/orvalith-core/src/{document,compose,history}.rs`, `crates/orvalith/src/{main,app,app/io,canvas,prefs,theme}.rs`, `crates/orvalith-core/src/{orva,imageio,fsio,edit,view,paint,fill,geom,blend,compose,layerops,selection,transform,docops,snap,maskops}.rs`, `crates/orvalith/src/{tools,canvas,layers_ui,select,geometry}.rs`, `crates/orvalith/src/app/{io,selops,geocmds}.rs`.
 - **Executar:** `cargo run -p orvalith` (PATH: `%USERPROFILE%\.cargo\bin`).
 - **Ambiente:** Rust 1.99.1 via rustup; VS Build Tools 2022 instalado via winget (workload C++).

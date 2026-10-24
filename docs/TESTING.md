@@ -21,6 +21,9 @@ fmt, clippy, 112 testes e build release OK; smoke test abre/fecha. Manual: duas 
 ## Estágio 3 (2026-10-23)
 fmt, clippy, 70 testes e build release OK; smoke test abre/fecha. Manual: Ctrl+N → B (pincel): arrastar rápido em círculos, conferir ausência de lacunas e que Ctrl+Z desfaz o traço inteiro; [ e ] mudam o tamanho; E apaga; I amostra (Alt = fundo); G balde (Tolerância/Contíguo); Shift+G gradiente (Esc cancela durante o arrasto); X troca cores, D restaura; salvar preset e reiniciar o app; salvar `.orva`, reabrir e comparar a pintura; testar em zoom 25%, 100% e 800%.
 
+## Estágio 15.2 (2026-10-23)
+fmt, clippy -D warnings, 408 testes (núcleo 301 + app 107) e build release OK; smoke test: abre e fecha. Manual: Editar → Ações → Gravar; aplicar Inverter e Reduzir; Parar, nomear e Salvar; Reproduzir em outro documento; Lote…: escolher arquivos (incluindo um corrompido e um .xyz), pasta de saída, Processar e conferir o relatório; repetir sem a opção de sobrescrever (arquivos "(2)").
+
 ## Estágio 15.1 (2026-10-23)
 fmt, clippy -D warnings, 404 testes (núcleo 298 + app 106) e build release OK; smoke test: abre e fecha. Manual: Ctrl+Shift+P e digitar "mediana"; Editar → Atalhos de teclado… → Definir… num comando, conferir conflito e Restaurar; reabrir o aplicativo e ver o atalho mantido; Preferências → Alto contraste.
 

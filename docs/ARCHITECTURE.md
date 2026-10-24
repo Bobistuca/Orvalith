@@ -75,5 +75,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Comandos e atalhos (Estágio 15.1)
 [app/commands.rs](../crates/orvalith/src/app/commands.rs): `registry()` (comandos com id/rótulo/atalho padrão), `Keymap` (tabela ordenada que o teclado consulta), `rebind`/`effective` (diferenças guardadas em `prefs.keymap`), paleta e editor de atalhos.
 
+## Ações e lote (Estágio 15.2)
+[actions.rs](../crates/orvalith-core/src/actions.rs): `Step`/`Macro` (serializáveis), `apply_step`/`run`, `run_batch` (falhas isoladas por arquivo com `catch_unwind`), `report_text`. UI: [app/actionsui.rs](../crates/orvalith/src/app/actionsui.rs); a gravação recolhe `Applied` das sessões de ajuste/filtro e `GeoState::recorded`.
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

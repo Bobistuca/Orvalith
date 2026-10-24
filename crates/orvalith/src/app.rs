@@ -1,5 +1,6 @@
 //! Estado da aplicação e interface: menus, abas, camadas, diálogos, atalhos e status.
 
+mod actionsui;
 mod commands;
 mod geocmds;
 mod io;
@@ -127,6 +128,8 @@ pub struct OrvalithApp {
     pdf_import: Option<pdfs::PdfImport>,
     timeline: timeline::TimelineUi,
     cmd: commands::CmdUi,
+    actions: actionsui::ActionsUi,
+    batch: actionsui::BatchUi,
     keymap: commands::Keymap,
     queued: Vec<Action>,
     video: videoui::VideoUi,
@@ -176,6 +179,8 @@ impl OrvalithApp {
             pdf_import: None,
             timeline: timeline::TimelineUi::default(),
             cmd: commands::CmdUi::default(),
+            actions: actionsui::ActionsUi::default(),
+            batch: actionsui::BatchUi::default(),
             keymap: commands::Keymap::build(&prefs_keymap),
             queued: Vec::new(),
             video: videoui::VideoUi::default(),
@@ -386,12 +391,9 @@ impl OrvalithApp {
                 self.cmd.palette = !self.cmd.palette;
             }
             Action::ShortcutsEditor => self.cmd.editor = !self.cmd.editor,
-            Action::Help
-            | Action::Macros
-            | Action::Batch
-            | Action::Presets
-            | Action::History
-            | Action::OpenExample(_) => {}
+            Action::Macros => self.actions.open = !self.actions.open,
+            Action::Batch => self.batch.open = !self.batch.open,
+            Action::Help | Action::Presets | Action::History | Action::OpenExample(_) => {}
             Action::Select(c) => self.run_select(c),
             Action::CopySel(cut) => self.copy_cut(cut),
             Action::DeleteKey => self.delete_key(),
@@ -615,6 +617,14 @@ impl eframe::App for OrvalithApp {
                     ui.separator();
                     if ui.button("Paleta de comandos…  Ctrl+Shift+P").clicked() {
                         actions.push(Action::Palette);
+                        ui.close();
+                    }
+                    if ui.button("Ações (macros)…").clicked() {
+                        actions.push(Action::Macros);
+                        ui.close();
+                    }
+                    if ui.button("Processamento em lote…").clicked() {
+                        actions.push(Action::Batch);
                         ui.close();
                     }
                     if ui.button("Atalhos de teclado…").clicked() {
@@ -1383,6 +1393,10 @@ impl OrvalithApp {
             }
         }
         self.video.set_cache(self.prefs.frame_cache as usize);
+        self.drain_recorded();
+        self.batch_poll(ctx);
+        self.actions_window(ctx);
+        self.batch_window(ctx);
         self.command_palette(ctx);
         self.shortcuts_editor(ctx);
         self.video_poll(ctx);
@@ -1727,6 +1741,10 @@ impl OrvalithApp {
             (self.filter_session.as_mut(), self.docs.get_mut(self.active))
         {
             if filterui::session_window(ctx, s, open) {
+                if s.applied {
+                    self.actions
+                        .record(orvalith_core::actions::Step::Filter(s.filter.clone()));
+                }
                 self.filter_session = None;
             }
         }
@@ -1734,6 +1752,10 @@ impl OrvalithApp {
             (self.adj_session.as_mut(), self.docs.get_mut(self.active))
         {
             if adjustui::session_window(ctx, s, open) {
+                if s.applied {
+                    self.actions
+                        .record(orvalith_core::actions::Step::Adjust(s.adj.clone()));
+                }
                 self.adj_session = None;
             }
         }

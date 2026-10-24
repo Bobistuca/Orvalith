@@ -388,6 +388,8 @@ pub fn gradient_editor(ui: &mut egui::Ui, stops: &mut Vec<GradStop>, st: &mut Ad
 // Sessão destrutiva: janela de ajuste com prévia ao vivo na camada ativa.
 
 pub struct AdjSession {
+    /// O ajuste foi aplicado (e não cancelado) quando a janela fechou.
+    pub applied: bool,
     pub layer: LayerId,
     original: Arc<Vec<u8>>,
     pub adj: Adjustment,
@@ -408,6 +410,7 @@ impl AdjSession {
             return Err(msg.into());
         }
         Ok(Self {
+            applied: false,
             layer: l.id,
             original: l.pixels.clone(),
             adj: Adjustment::neutral(kind),
@@ -499,6 +502,7 @@ pub fn session_window(ctx: &egui::Context, s: &mut AdjSession, open: &mut OpenDo
     if ok {
         s.preview(open);
         s.commit(open);
+        s.applied = true;
         return true;
     }
     false

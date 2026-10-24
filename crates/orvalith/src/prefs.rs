@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use orvalith_core::actions::Macro;
 use orvalith_core::paint::{BrushParams, BrushPreset};
 use orvalith_core::style::StylePreset;
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,8 @@ pub struct Prefs {
     pub style_presets: Vec<StylePreset>,
     /// Atalhos personalizados: id do comando → "Ctrl+Shift+K" (texto vazio = sem atalho).
     pub keymap: BTreeMap<String, String>,
+    /// Ações (macros) salvas.
+    pub macros: Vec<Macro>,
     /// Orçamento de memória do histórico de cada documento (MiB).
     pub history_budget_mb: u32,
     /// Orçamento de memória dos instantâneos (MiB).
@@ -64,6 +67,7 @@ impl Default for Prefs {
             swatches: Vec::new(),
             style_presets: Vec::new(),
             keymap: BTreeMap::new(),
+            macros: Vec::new(),
             history_budget_mb: 256,
             snapshot_budget_mb: 256,
             frame_cache: 48,
@@ -93,6 +97,10 @@ impl Prefs {
         self.brush_presets.truncate(200);
         self.swatches.truncate(200);
         self.style_presets.truncate(100);
+        self.macros.truncate(100);
+        for m in &mut self.macros {
+            m.sanitize();
+        }
         self.history_budget_mb = self.history_budget_mb.clamp(16, 8192);
         self.snapshot_budget_mb = self.snapshot_budget_mb.clamp(16, 8192);
         self.frame_cache = self.frame_cache.clamp(4, 1024);
@@ -246,5 +254,47 @@ mod tests {
         assert_eq!(l.window_size, [800.0, 8000.0]);
         assert!(l.dark_theme);
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+    #[test]
+    fn macros_shortcuts_and_budgets_persist_and_hostile_values_are_sanitized() {
+        use orvalith_core::actions::{Macro, Resample, Step};
+        let dir = std::env::temp_dir().join(format!("orvalith-prefs15-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        let mut p = Prefs::default();
+        p.macros.push(Macro {
+            name: "miniatura".into(),
+            steps: vec![Step::FitWithin {
+                max_side: 256,
+                resample: Resample::Bilinear,
+            }],
+        });
+        p.keymap.insert("file.save".into(), "Ctrl+Alt+S".into());
+        p.history_budget_mb = 512;
+        p.high_contrast = true;
+        p.save_to(&path).unwrap();
+        let back = Prefs::load_from(&path);
+        assert_eq!(back.macros, p.macros);
+        assert_eq!(
+            back.keymap.get("file.save").map(String::as_str),
+            Some("Ctrl+Alt+S")
+        );
+        assert_eq!((back.history_budget_mb, back.high_contrast), (512, true));
+        // Arquivo editado com valores absurdos.
+        let mut bad = p.clone();
+        bad.history_budget_mb = 0;
+        bad.frame_cache = 99999;
+        bad.macros[0].steps = vec![
+            Step::FitWithin {
+                max_side: 0,
+                resample: Resample::Nearest
+            };
+            9999
+        ];
+        bad.save_to(&path).unwrap();
+        let fixed = Prefs::load_from(&path);
+        assert_eq!((fixed.history_budget_mb, fixed.frame_cache), (16, 1024));
+        assert!(fixed.macros[0].steps.len() <= orvalith_core::actions::MAX_STEPS);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

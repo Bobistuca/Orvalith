@@ -416,7 +416,7 @@ pub fn registry() -> Vec<CmdDef> {
         push(Arc::new(move || Action::AdjStart(i)), None);
         push(Arc::new(move || Action::AdjLayer(i)), None);
     }
-    let simple: [fn() -> Action; 13] = [
+    let simple: [fn() -> Action; 15] = [
         || Action::ToggleHist,
         || Action::ToggleTimeline,
         || Action::ToggleVideo,
@@ -425,6 +425,8 @@ pub fn registry() -> Vec<CmdDef> {
         || Action::ImportPdf,
         || Action::ExportPdf,
         || Action::ShortcutsEditor,
+        || Action::Macros,
+        || Action::Batch,
         || Action::PlaceObject(false),
         || Action::PlaceObject(true),
         || Action::Layer(LayerCmd::Rasterize),

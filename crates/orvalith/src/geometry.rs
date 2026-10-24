@@ -849,6 +849,8 @@ pub struct StraightenDialog {
 
 #[derive(Default)]
 pub struct GeoState {
+    /// Passos de ação gerados aqui (tamanho da imagem, orientação); o aplicativo os recolhe.
+    pub recorded: Vec<orvalith_core::actions::Step>,
     pub transform: Option<TransformSession>,
     pub crop: CropState,
     pub image_size: Option<ImageSizeDialog>,
@@ -1007,7 +1009,19 @@ impl GeoState {
                     .keep_physical
                     .then(|| open.doc.ppi * d.w as f32 / open.doc.width as f32);
                 match docops::resize_image(&open.doc, d.w, d.h, d.interp, ppi) {
-                    Ok(st) => open.apply_state("Tamanho da imagem", st),
+                    Ok(st) => {
+                        open.apply_state("Tamanho da imagem", st);
+                        self.recorded
+                            .push(orvalith_core::actions::Step::ResizeImage {
+                                width: d.w,
+                                height: d.h,
+                                resample: match d.interp {
+                                    Interp::Nearest => orvalith_core::actions::Resample::Nearest,
+                                    Interp::Bilinear => orvalith_core::actions::Resample::Bilinear,
+                                    Interp::Bicubic => orvalith_core::actions::Resample::Bicubic,
+                                },
+                            });
+                    }
                     Err(e) => notice = Some(e),
                 }
             } else if !cancel {

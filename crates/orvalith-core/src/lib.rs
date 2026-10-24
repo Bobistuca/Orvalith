@@ -3,6 +3,7 @@
 //! Convenções: coordenadas em pixels do documento (independentes de zoom/DPI);
 //! pixels RGBA8 sRGB com alfa **não pré-multiplicado** (ver docs/ARCHITECTURE.md).
 
+pub mod actions;
 pub mod adjops;
 pub mod adjust;
 pub mod anim;
