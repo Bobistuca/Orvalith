@@ -65,12 +65,15 @@ pub fn builtin_doc_presets() -> Vec<DocPreset> {
         transparent: false,
     };
     vec![
-        p("Full HD 1920×1080", 1920, 1080, 72.0),
-        p("4K UHD 3840×2160", 3840, 2160, 72.0),
-        p("A4 retrato 300 ppi", 2480, 3508, 300.0),
-        p("Quadrado 1080×1080", 1080, 1080, 72.0),
-        p("Miniatura de vídeo 1280×720", 1280, 720, 72.0),
-        p("Ícone 512×512", 512, 512, 72.0),
+        p("Foto paisagem 3:2", 3000, 2000, 300.0),
+        p("Foto retrato 2:3", 2000, 3000, 300.0),
+        p("Foto 4:3", 2400, 1800, 300.0),
+        p("Quadrado 1:1", 2000, 2000, 72.0),
+        p("Retrato 4:5", 1080, 1350, 72.0),
+        p("Paisagem 16:9", 1920, 1080, 72.0),
+        p("4K UHD", 3840, 2160, 72.0),
+        p("A4 retrato", 2480, 3508, 300.0),
+        p("Ícone", 512, 512, 72.0),
     ]
 }
 

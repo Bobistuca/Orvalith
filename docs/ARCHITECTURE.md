@@ -84,5 +84,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Estabilidade e distribuição (Estágio 16)
 [robustness.rs](../crates/orvalith-core/src/robustness.rs) (testes de corrupção e medições), [crashlog.rs](../crates/orvalith/src/crashlog.rs) (gancho de pânico), [scripts/](../scripts/) (pacote e licenças). Veja [[DISTRIBUTION]] e [[PERFORMANCE]].
 
+## Tela inicial (Estágio 17)
+[app/home.rs](../crates/orvalith/src/app/home.rs) (barra lateral, recentes, predefinições, leitura de metadados em fio separado), [kit.rs](../crates/orvalith/src/kit.rs) (botões/itens/cartões com estados), [icons.rs](../crates/orvalith/src/icons.rs), tokens em [theme.rs](../crates/orvalith/src/theme.rs).
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

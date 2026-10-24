@@ -528,7 +528,7 @@ impl OrvalithApp {
                 ui.separator();
                 match tab {
                     0 => {
-                        ui.small("Embutidas: Full HD, 4K, A4 300 ppi, quadrado, miniatura e ícone (aparecem em Novo documento).");
+                        ui.small("Embutidas: fotos 3:2, 2:3 e 4:3, quadrado, retrato 4:5, 16:9, 4K, A4 e ícone (aparecem em Novo documento e na tela inicial).");
                         ui.horizontal(|ui| {
                             ui.add(
                                 egui::TextEdit::singleline(&mut doc_name)

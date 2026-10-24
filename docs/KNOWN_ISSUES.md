@@ -17,6 +17,7 @@
 - Malha de deformação: bordas externas sem suavização; os pontos de controle são fixos em 4×4.
 - Réguas desaparecem enquanto a visão está girada; o Mover não encaixa em guias.
 - A máscara de grupo não acompanha o conteúdo ao mover o grupo.
+- Estágio 17: a tela inicial não foi exercitada com cliques de mouse reais (só teclado simulado em testes e capturas da janela); sem miniaturas nos recentes; a barra de menus existente corta itens abaixo de ~850 px de largura (mínimo suportado 800×500); a barra de título é a do Windows e não segue o tema do app; o espaço de trabalho de edição mantém o visual anterior.
 - Estágio 16: sem instalador, assinatura de código nem ícone no .exe (SmartScreen pode avisar); processamento só na CPU e composição de um núcleo; sem fuzzing guiado por cobertura; workflow de release nunca executado; o relatório de falhas não foi exercitado com um pânico real na interface.
 - Estágio 15.3: predefinições de padrão e de textura não existem; espaços de trabalho só alternam painéis; instantâneos ficam só na memória e ignoram máscaras na contagem; importação limitada a .gpl e .ggr; janelas de predefinições, histórico e ajuda não foram exercitadas com mouse.
 - Estágio 15.2: ações agem em todas as camadas raster comuns (ignoram seleção e camada ativa); só 6 tipos de passo; o lote é sequencial e não processa PDF/vídeo; janelas de ações e lote não foram exercitadas com mouse; arquivos .orva no lote são relidos e exportados como imagem composta.

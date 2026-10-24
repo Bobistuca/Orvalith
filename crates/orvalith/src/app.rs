@@ -3,6 +3,7 @@
 mod actionsui;
 mod commands;
 mod geocmds;
+mod home;
 mod io;
 mod pdfs;
 mod selops;
@@ -75,6 +76,15 @@ pub(crate) enum BatchKind {
 }
 
 enum Action {
+    NewSized {
+        width: u32,
+        height: u32,
+        ppi: f32,
+        transparent: bool,
+    },
+    Preferences,
+    ForgetRecent(String),
+    EnableRecent,
     Workspace(usize),
     TogglePanel(u8),
     New,
@@ -134,6 +144,7 @@ pub struct OrvalithApp {
     actions: actionsui::ActionsUi,
     batch: actionsui::BatchUi,
     wf: workflow::WorkflowUi,
+    home: home::HomeUi,
     keymap: commands::Keymap,
     queued: Vec<Action>,
     video: videoui::VideoUi,
@@ -188,6 +199,7 @@ impl OrvalithApp {
             actions: actionsui::ActionsUi::default(),
             batch: actionsui::BatchUi::default(),
             wf: workflow::WorkflowUi::default(),
+            home: home::HomeUi::default(),
             keymap: commands::Keymap::build(&prefs_keymap),
             queued: Vec::new(),
             video: videoui::VideoUi::default(),
@@ -291,6 +303,31 @@ impl OrvalithApp {
                 if self.new_doc.is_none() {
                     self.open_new_dialog();
                 }
+            }
+            Action::NewSized {
+                width,
+                height,
+                ppi,
+                transparent,
+            } => {
+                let form = NewDocForm {
+                    width,
+                    height,
+                    ppi,
+                    transparent,
+                };
+                if let Err(e) = self.create_document(&form) {
+                    self.show_message("Erro", e);
+                }
+            }
+            Action::Preferences => self.prefs_open = true,
+            Action::ForgetRecent(p) => {
+                self.prefs.recent.retain(|r| *r != p);
+                self.prefs.save();
+            }
+            Action::EnableRecent => {
+                self.prefs.recent_enabled = true;
+                self.prefs.save();
             }
             Action::Open => self.open_dialog(),
             Action::OpenPath(p) => self.open_path(p),
@@ -1222,69 +1259,57 @@ impl eframe::App for OrvalithApp {
             }
         }
 
-        egui::CentralPanel::default().show(root, |ui| {
-            if let Some(open) = self.docs.get_mut(self.active) {
-                let cmd = actions.iter().rev().find_map(|a| match a {
-                    Action::View(c) => Some(*c),
-                    _ => None,
-                });
-                let mut overlay = self.tools.overlay(self.cursor_doc, Some(&*open));
-                overlay.view = self.view_opts;
-                let out = canvas::show(ui, open, cmd, space_down, &overlay);
-                self.cursor_doc = out.hover;
-                if self.tools.vec.text_editing().is_some() {
-                    text_editor_ui(&ctx, &mut self.tools.vec, open, &out);
-                }
-                if self.tools.sel.picking() {
-                    self.tools.sel.range_pick(open, &out);
-                } else if let Some(qm) = open.qm.as_deref_mut() {
-                    let t = self.tools.tool;
-                    if crate::select::is_selection_tool(t) || t == Tool::Move {
-                        self.tools.notice = Some(
-                            "Máscara rápida: use pincel, lápis, balde ou gradiente (Q sai).".into(),
-                        );
-                    } else if t == Tool::Eraser {
-                        self.tools.notice =
-                            Some("Na máscara rápida, pinte de branco para selecionar.".into());
+        if !has_doc {
+            self.home_sidebar(root, &mut actions);
+        }
+        let central = if has_doc {
+            egui::Frame::central_panel(root.style())
+        } else {
+            egui::Frame::new().fill(theme::Palette::of(root).bg)
+        };
+        egui::CentralPanel::default()
+            .frame(central)
+            .show(root, |ui| {
+                if let Some(open) = self.docs.get_mut(self.active) {
+                    let cmd = actions.iter().rev().find_map(|a| match a {
+                        Action::View(c) => Some(*c),
+                        _ => None,
+                    });
+                    let mut overlay = self.tools.overlay(self.cursor_doc, Some(&*open));
+                    overlay.view = self.view_opts;
+                    let out = canvas::show(ui, open, cmd, space_down, &overlay);
+                    self.cursor_doc = out.hover;
+                    if self.tools.vec.text_editing().is_some() {
+                        text_editor_ui(&ctx, &mut self.tools.vec, open, &out);
+                    }
+                    if self.tools.sel.picking() {
+                        self.tools.sel.range_pick(open, &out);
+                    } else if let Some(qm) = open.qm.as_deref_mut() {
+                        let t = self.tools.tool;
+                        if crate::select::is_selection_tool(t) || t == Tool::Move {
+                            self.tools.notice = Some(
+                                "Máscara rápida: use pincel, lápis, balde ou gradiente (Q sai)."
+                                    .into(),
+                            );
+                        } else if t == Tool::Eraser {
+                            self.tools.notice =
+                                Some("Na máscara rápida, pinte de branco para selecionar.".into());
+                        } else {
+                            let (fg, bg) = (self.tools.fg, self.tools.bg);
+                            self.tools.fg = gray(fg);
+                            self.tools.bg = gray(bg);
+                            self.tools.handle(qm, &out);
+                            self.tools.fg = fg;
+                            self.tools.bg = bg;
+                        }
                     } else {
-                        let (fg, bg) = (self.tools.fg, self.tools.bg);
-                        self.tools.fg = gray(fg);
-                        self.tools.bg = gray(bg);
-                        self.tools.handle(qm, &out);
-                        self.tools.fg = fg;
-                        self.tools.bg = bg;
+                        self.tools.handle(open, &out);
                     }
                 } else {
-                    self.tools.handle(open, &out);
+                    self.cursor_doc = None;
+                    self.home_content(ui, &mut actions);
                 }
-            } else {
-                self.cursor_doc = None;
-                ui.vertical_centered(|ui| {
-                    ui.add_space(ui.available_height() * 0.25);
-                    ui.heading(egui::RichText::new("Orvalith").color(theme::ACCENT));
-                    ui.label("Editor de imagens local, sem login.");
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space((ui.available_width() / 2.0 - 110.0).max(0.0));
-                        if ui.button("Novo documento").clicked() {
-                            actions.push(Action::New);
-                        }
-                        if ui.button("Abrir arquivo").clicked() {
-                            actions.push(Action::Open);
-                        }
-                    });
-                    if !self.prefs.recent.is_empty() {
-                        ui.add_space(16.0);
-                        ui.label("Recentes");
-                        for r in self.prefs.recent.clone() {
-                            if ui.link(&r).clicked() {
-                                actions.push(Action::OpenPath(PathBuf::from(r)));
-                            }
-                        }
-                    }
-                });
-            }
-        });
+            });
 
         let mut view_cmd = None; // já consumido pelo canvas acima
         for a in actions {

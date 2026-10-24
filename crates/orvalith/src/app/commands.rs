@@ -165,6 +165,10 @@ pub fn action_id(a: &Action) -> String {
         Action::Presets => "window.presets".into(),
         Action::History => "window.history".into(),
         Action::OpenExample(i) => format!("help.example.{i}"),
+        Action::NewSized { .. } => "file.newsized".into(),
+        Action::Preferences => "app.preferences".into(),
+        Action::ForgetRecent(_) => "file.forgetrecent".into(),
+        Action::EnableRecent => "file.enablerecent".into(),
         Action::Workspace(i) => format!("workspace.{i}"),
         Action::TogglePanel(k) => format!("panel.{k}"),
     }
@@ -280,6 +284,10 @@ pub fn action_label(a: &Action) -> String {
         Action::Presets => "Janela: Predefinições".into(),
         Action::History => "Janela: Histórico e instantâneos".into(),
         Action::OpenExample(i) => format!("Ajuda: Abrir exemplo {}", i + 1),
+        Action::NewSized { .. } => "Arquivo: Novo documento por predefinição".into(),
+        Action::Preferences => "Aplicativo: Preferências".into(),
+        Action::ForgetRecent(_) => "Arquivo: Remover dos recentes".into(),
+        Action::EnableRecent => "Arquivo: Ligar histórico de recentes".into(),
         Action::Workspace(i) => crate::presets::builtin_workspaces().get(*i).map_or_else(
             || format!("Espaço de trabalho: {}", i + 1),
             |w| format!("Espaço de trabalho: {}", w.name),
@@ -430,7 +438,7 @@ pub fn registry() -> Vec<CmdDef> {
         push(Arc::new(move || Action::AdjStart(i)), None);
         push(Arc::new(move || Action::AdjLayer(i)), None);
     }
-    let simple: [fn() -> Action; 18] = [
+    let simple: [fn() -> Action; 19] = [
         || Action::ToggleHist,
         || Action::ToggleTimeline,
         || Action::ToggleVideo,
@@ -442,6 +450,7 @@ pub fn registry() -> Vec<CmdDef> {
         || Action::Macros,
         || Action::Batch,
         || Action::Help,
+        || Action::Preferences,
         || Action::Presets,
         || Action::History,
         || Action::PlaceObject(false),
@@ -592,6 +601,7 @@ impl CmdUi {
 impl OrvalithApp {
     pub(super) fn rebuild_keymap(&mut self) {
         self.keymap = Keymap::build(&self.prefs.keymap);
+        self.home.hints = None;
     }
 
     pub(super) fn command_palette(&mut self, ctx: &egui::Context) {

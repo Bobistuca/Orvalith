@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Estágio 17: tela inicial redesenhada (barra lateral, recentes reais com arquivo ausente, predefinições de documento, estados vazios, foco de teclado), tokens de estilo, widgets e ícones reutilizáveis; o tema do app deixa de seguir o tema do Windows.
 - Estágio 16: testes de robustez com arquivos corrompidos, relatório local de falhas, medições de desempenho, pacote portátil Windows, licenças de terceiros, versão 0.1.0 e licença MIT.
 - Estágio 15.3: predefinições (documento, exportação, gradiente, pacote), importação GPL/GGR, espaços de trabalho e painéis persistentes, histórico visual, instantâneos, ajuda local e exemplos originais.
 - Estágio 15.2: ações (macros) gravadas e reproduzíveis, processamento em lote com relatório por arquivo e proteção dos originais.

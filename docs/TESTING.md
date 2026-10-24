@@ -21,6 +21,9 @@ fmt, clippy, 112 testes e build release OK; smoke test abre/fecha. Manual: duas 
 ## Estágio 3 (2026-10-23)
 fmt, clippy, 70 testes e build release OK; smoke test abre/fecha. Manual: Ctrl+N → B (pincel): arrastar rápido em círculos, conferir ausência de lacunas e que Ctrl+Z desfaz o traço inteiro; [ e ] mudam o tamanho; E apaga; I amostra (Alt = fundo); G balde (Tolerância/Contíguo); Shift+G gradiente (Esc cancela durante o arrasto); X troca cores, D restaura; salvar preset e reiniciar o app; salvar `.orva`, reabrir e comparar a pintura; testar em zoom 25%, 100% e 800%.
 
+## Estágio 17 (2026-10-24)
+fmt, clippy -D warnings, testes (núcleo 310 + app 128 = 438; 1 de desempenho ignorado) e build release OK; smoke: abre e permanece em execução. Capturas com `scripts/screenshot.ps1` (APPDATA isolado, `PrintWindow`) em 1280×720, 1920×1080, 800×500, escala 150% e tema claro: `docs/design/home-*.png` (antes: `home-antes.png`). Manual: abrir sem documento; Novo documento e cancelar; Abrir arquivo e cancelar; clicar numa predefinição e conferir as medidas; fechar a aba e voltar à tela inicial; recentes com arquivo apagado (aviso, não abre, ✕ remove); Preferências → desligar "Lembrar arquivos recentes"; Tab percorre todos os controles com anel de foco; Enter ativa.
+
 ## Estágio 16 (2026-10-24)
 fmt, clippy -D warnings, testes (núcleo 310 + app 116 = 426; os de desempenho ficam ignorados) e build release OK. `scripts/package.ps1` gerou o zip (≈12,5 MiB) e o exe extraído abriu e permaneceu em execução. Manual: extrair o zip em outra pasta e abrir; arrastar um arquivo corrompido para a janela e confirmar mensagem de erro sem fechar.
 

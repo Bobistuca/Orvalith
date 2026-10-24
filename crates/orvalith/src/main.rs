@@ -8,6 +8,8 @@ mod compsui;
 mod crashlog;
 mod filterui;
 mod geometry;
+mod icons;
+mod kit;
 mod layers_ui;
 mod liquifyui;
 mod objectui;
