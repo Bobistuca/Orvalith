@@ -8,6 +8,7 @@ mod pdfs;
 mod selops;
 mod timeline;
 mod videoui;
+mod workflow;
 
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -51,6 +52,7 @@ struct ExportForm {
     max_side: u32,
     sprite_cols: u32,
     estimate: Option<String>,
+    preset_name: String,
 }
 
 impl ExportForm {
@@ -72,8 +74,9 @@ pub(crate) enum BatchKind {
     Sprites(u32),
 }
 
-#[allow(dead_code)] // Ajuda, ações, lote, predefinições e histórico chegam nas próximas subetapas.
 enum Action {
+    Workspace(usize),
+    TogglePanel(u8),
     New,
     Open,
     OpenPath(PathBuf),
@@ -130,6 +133,7 @@ pub struct OrvalithApp {
     cmd: commands::CmdUi,
     actions: actionsui::ActionsUi,
     batch: actionsui::BatchUi,
+    wf: workflow::WorkflowUi,
     keymap: commands::Keymap,
     queued: Vec<Action>,
     video: videoui::VideoUi,
@@ -170,8 +174,10 @@ impl OrvalithApp {
         let recovery_found = io::scan_recovery(prefs.recovery_path());
         let tools = ToolState::new(prefs.brush, prefs.fg, prefs.bg);
         crate::styleui::load_presets(prefs.style_presets.clone());
+        crate::presets::load_gradients(prefs.gradient_presets.clone());
+        let start_layout = prefs.layout;
         let prefs_keymap = prefs.keymap.clone();
-        Self {
+        let mut app = Self {
             docs: Vec::new(),
             active: 0,
             new_doc: None,
@@ -181,6 +187,7 @@ impl OrvalithApp {
             cmd: commands::CmdUi::default(),
             actions: actionsui::ActionsUi::default(),
             batch: actionsui::BatchUi::default(),
+            wf: workflow::WorkflowUi::default(),
             keymap: commands::Keymap::build(&prefs_keymap),
             queued: Vec::new(),
             video: videoui::VideoUi::default(),
@@ -208,7 +215,10 @@ impl OrvalithApp {
             hist: HistState::default(),
             comps_ui: CompsUi::default(),
             color_dlg: ColorDialog::default(),
-        }
+        };
+        app.timeline.open = start_layout.timeline;
+        app.hist.open = start_layout.histogram;
+        app
     }
 
     fn open_new_dialog(&mut self) {
@@ -304,6 +314,7 @@ impl OrvalithApp {
                         max_side: 0,
                         sprite_cols: 4,
                         estimate: None,
+                        preset_name: String::new(),
                     });
                 }
             }
@@ -393,7 +404,21 @@ impl OrvalithApp {
             Action::ShortcutsEditor => self.cmd.editor = !self.cmd.editor,
             Action::Macros => self.actions.open = !self.actions.open,
             Action::Batch => self.batch.open = !self.batch.open,
-            Action::Help | Action::Presets | Action::History | Action::OpenExample(_) => {}
+            Action::Help => self.wf.help_open = !self.wf.help_open,
+            Action::Presets => self.wf.presets_open = !self.wf.presets_open,
+            Action::History => self.wf.history_open = !self.wf.history_open,
+            Action::OpenExample(i) => self.open_example(i),
+            Action::Workspace(i) => self.apply_workspace(i),
+            Action::TogglePanel(k) => {
+                let mut l = self.current_layout();
+                match k {
+                    0 => l.tools = !l.tools,
+                    1 => l.layers = !l.layers,
+                    2 => l.options = !l.options,
+                    _ => l.status = !l.status,
+                }
+                self.apply_layout(l);
+            }
             Action::Select(c) => self.run_select(c),
             Action::CopySel(cut) => self.copy_cut(cut),
             Action::DeleteKey => self.delete_key(),
@@ -467,6 +492,8 @@ impl eframe::App for OrvalithApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
         let mut actions: Vec<Action> = Vec::new();
+        let ws_names: Vec<String> = self.all_workspaces().into_iter().map(|w| w.name).collect();
+        let lay = self.current_layout();
 
         if let Some(size) = self.window_size(&ctx) {
             self.prefs.window_size = size;
@@ -617,6 +644,14 @@ impl eframe::App for OrvalithApp {
                     ui.separator();
                     if ui.button("Paleta de comandos…  Ctrl+Shift+P").clicked() {
                         actions.push(Action::Palette);
+                        ui.close();
+                    }
+                    if ui.button("Histórico e instantâneos…").clicked() {
+                        actions.push(Action::History);
+                        ui.close();
+                    }
+                    if ui.button("Predefinições…").clicked() {
+                        actions.push(Action::Presets);
                         ui.close();
                     }
                     if ui.button("Ações (macros)…").clicked() {
@@ -978,6 +1013,34 @@ impl eframe::App for OrvalithApp {
                         }
                     });
                     ui.separator();
+                    ui.menu_button("Espaço de trabalho", |ui| {
+                        for (i, n) in ws_names.iter().enumerate() {
+                            if ui.button(n).clicked() {
+                                actions.push(Action::Workspace(i));
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.menu_button("Painéis", |ui| {
+                        for (k, (n, on)) in [
+                            ("Ferramentas", lay.tools),
+                            ("Camadas", lay.layers),
+                            ("Opções da ferramenta", lay.options),
+                            ("Barra de status", lay.status),
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        {
+                            if ui
+                                .button(format!("{} {n}", if on { "✓" } else { "  " }))
+                                .clicked()
+                            {
+                                actions.push(Action::TogglePanel(k as u8));
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.separator();
                     for (label, sc, cmd) in [
                         ("Girar visão 15° horário", "Alt+→", ViewCmd::Rotate(15.0)),
                         (
@@ -999,6 +1062,23 @@ impl eframe::App for OrvalithApp {
                             ui.close();
                         }
                     }
+                });
+                ui.menu_button("Ajuda", |ui| {
+                    if ui
+                        .add(egui::Button::new("Ajuda local…").shortcut_text("F1"))
+                        .clicked()
+                    {
+                        actions.push(Action::Help);
+                        ui.close();
+                    }
+                    ui.menu_button("Exemplos originais", |ui| {
+                        for (i, (n, _)) in orvalith_core::examples::EXAMPLES.iter().enumerate() {
+                            if ui.button(*n).clicked() {
+                                actions.push(Action::OpenExample(i));
+                                ui.close();
+                            }
+                        }
+                    });
                 });
             });
         });
@@ -1034,99 +1114,112 @@ impl eframe::App for OrvalithApp {
                 self.request_close(i);
             }
 
-            egui::Panel::bottom("status").show(root, |ui| {
-                ui.horizontal(|ui| {
-                    if let Some(d) = self.docs.get(self.active) {
-                        ui.label(format!("{:.0}%", d.zoom_percent));
-                        ui.separator();
-                        ui.label(format!(
-                            "{} × {} px · {:.0} ppi",
-                            d.doc.width, d.doc.height, d.doc.ppi
-                        ));
-                        if let Some(p) = self.cursor_doc {
+            if self.prefs.layout.status {
+                egui::Panel::bottom("status").show(root, |ui| {
+                    ui.horizontal(|ui| {
+                        if let Some(d) = self.docs.get(self.active) {
+                            ui.label(format!("{:.0}%", d.zoom_percent));
                             ui.separator();
-                            ui.label(format!("x: {}  y: {}", p[0].floor(), p[1].floor()));
-                        }
-                        if let Some(p) = &d.doc.icc {
-                            ui.separator();
-                            ui.label(format!("Perfil: {}", p.name));
-                        }
-                        if let Some(r) = d.sel_info {
-                            ui.separator();
-                            ui.label(format!("Seleção: {} × {} em ({}, {})", r.w, r.h, r.x, r.y));
-                        }
-                        if d.qm.is_some() {
-                            ui.separator();
-                            ui.label(egui::RichText::new("Máscara rápida").color(theme::COPPER));
-                        }
-                        if let Some(n) = &self.tools.notice {
-                            ui.separator();
-                            ui.label(egui::RichText::new(n).color(theme::COPPER));
-                        }
-                    }
-                });
-            });
-
-            self.timeline_tick(&ctx);
-            self.timeline_panel(root);
-
-            egui::Panel::top("options").show(root, |ui| {
-                if let (Some(t), Some(open)) = (
-                    self.tools.geo.transform.as_mut(),
-                    self.docs.get_mut(self.active),
-                ) {
-                    let (changed, apply, cancel) = t.options_ui(ui);
-                    if changed {
-                        t.refresh(open);
-                    }
-                    if apply {
-                        actions.push(Action::Confirm);
-                    }
-                    if cancel {
-                        actions.push(Action::CancelTool);
-                    }
-                } else if self.tools.options_ui(
-                    ui,
-                    &mut self.prefs.brush_presets,
-                    self.docs.get_mut(self.active),
-                ) {
-                    self.persist_tools();
-                }
-            });
-
-            egui::Panel::left("tools")
-                .resizable(false)
-                .default_size(110.0)
-                .show(root, |ui| {
-                    for t in Tool::ALL {
-                        let r = ui
-                            .selectable_label(self.tools.tool == t, t.label())
-                            .on_hover_text(format!("{} ({})", t.label(), t.shortcut()));
-                        if r.clicked() {
-                            actions.push(Action::Tool(t));
-                        }
-                    }
-                    ui.separator();
-                    if self.tools.colors_ui(ui, &mut self.prefs.swatches) {
-                        self.persist_tools();
-                    }
-                });
-
-            egui::Panel::right("layers")
-                .resizable(true)
-                .default_size(270.0)
-                .show(root, |ui| {
-                    ui.heading("Camadas");
-                    ui.separator();
-                    let busy = self.tools.is_busy();
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        if let Some(open) = self.docs.get_mut(self.active) {
-                            for c in layers_ui::show(ui, open, busy) {
-                                actions.push(Action::Layer(c));
+                            ui.label(format!(
+                                "{} × {} px · {:.0} ppi",
+                                d.doc.width, d.doc.height, d.doc.ppi
+                            ));
+                            if let Some(p) = self.cursor_doc {
+                                ui.separator();
+                                ui.label(format!("x: {}  y: {}", p[0].floor(), p[1].floor()));
+                            }
+                            if let Some(p) = &d.doc.icc {
+                                ui.separator();
+                                ui.label(format!("Perfil: {}", p.name));
+                            }
+                            if let Some(r) = d.sel_info {
+                                ui.separator();
+                                ui.label(format!(
+                                    "Seleção: {} × {} em ({}, {})",
+                                    r.w, r.h, r.x, r.y
+                                ));
+                            }
+                            if d.qm.is_some() {
+                                ui.separator();
+                                ui.label(
+                                    egui::RichText::new("Máscara rápida").color(theme::COPPER),
+                                );
+                            }
+                            if let Some(n) = &self.tools.notice {
+                                ui.separator();
+                                ui.label(egui::RichText::new(n).color(theme::COPPER));
                             }
                         }
                     });
                 });
+            }
+
+            self.timeline_tick(&ctx);
+            self.timeline_panel(root);
+
+            if self.prefs.layout.options {
+                egui::Panel::top("options").show(root, |ui| {
+                    if let (Some(t), Some(open)) = (
+                        self.tools.geo.transform.as_mut(),
+                        self.docs.get_mut(self.active),
+                    ) {
+                        let (changed, apply, cancel) = t.options_ui(ui);
+                        if changed {
+                            t.refresh(open);
+                        }
+                        if apply {
+                            actions.push(Action::Confirm);
+                        }
+                        if cancel {
+                            actions.push(Action::CancelTool);
+                        }
+                    } else if self.tools.options_ui(
+                        ui,
+                        &mut self.prefs.brush_presets,
+                        self.docs.get_mut(self.active),
+                    ) {
+                        self.persist_tools();
+                    }
+                });
+            }
+
+            if self.prefs.layout.tools {
+                egui::Panel::left("tools")
+                    .resizable(false)
+                    .default_size(110.0)
+                    .show(root, |ui| {
+                        for t in Tool::ALL {
+                            let r = ui
+                                .selectable_label(self.tools.tool == t, t.label())
+                                .on_hover_text(format!("{} ({})", t.label(), t.shortcut()));
+                            if r.clicked() {
+                                actions.push(Action::Tool(t));
+                            }
+                        }
+                        ui.separator();
+                        if self.tools.colors_ui(ui, &mut self.prefs.swatches) {
+                            self.persist_tools();
+                        }
+                    });
+            }
+
+            if self.prefs.layout.layers {
+                egui::Panel::right("layers")
+                    .resizable(true)
+                    .default_size(270.0)
+                    .show(root, |ui| {
+                        ui.heading("Camadas");
+                        ui.separator();
+                        let busy = self.tools.is_busy();
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            if let Some(open) = self.docs.get_mut(self.active) {
+                                for c in layers_ui::show(ui, open, busy) {
+                                    actions.push(Action::Layer(c));
+                                }
+                            }
+                        });
+                    });
+            }
         }
 
         egui::CentralPanel::default().show(root, |ui| {
@@ -1244,6 +1337,21 @@ impl OrvalithApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
+                    egui::ComboBox::from_label("Predefinição")
+                        .selected_text("Escolher…")
+                        .show_ui(ui, |ui| {
+                            let all = crate::presets::builtin_doc_presets()
+                                .into_iter()
+                                .chain(self.prefs.doc_presets.iter().cloned());
+                            for p in all {
+                                if ui.selectable_label(false, &p.name).clicked() {
+                                    form.width = p.width;
+                                    form.height = p.height;
+                                    form.ppi = p.ppi;
+                                    form.transparent = p.transparent;
+                                }
+                            }
+                        });
                     ui.horizontal(|ui| {
                         ui.label("Largura (px)");
                         ui.add(egui::DragValue::new(&mut form.width).range(1..=Document::MAX_SIDE));
@@ -1279,10 +1387,34 @@ impl OrvalithApp {
             let mut cancel = false;
             let mut batch = None;
             let mut estimate = false;
+            let mut save_preset = false;
             egui::Window::new("Exportar imagem")
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
+                    egui::ComboBox::from_label("Predefinição")
+                        .selected_text("Escolher…")
+                        .show_ui(ui, |ui| {
+                            let all = crate::presets::builtin_export_presets()
+                                .into_iter()
+                                .chain(self.prefs.export_presets.iter().cloned());
+                            for p in all {
+                                if ui.selectable_label(false, &p.name).clicked() {
+                                    if let Some(f) = Format::from_ext(&p.ext) {
+                                        form.format = f;
+                                    }
+                                    form.estimate = None;
+                                    form.quality = p.quality;
+                                    form.max_side = p.max_side;
+                                    form.background = p.background;
+                                    form.color = match p.color {
+                                        1 => orvalith_core::imageio::ColorOut::ToSrgb,
+                                        2 => orvalith_core::imageio::ColorOut::Strip,
+                                        _ => orvalith_core::imageio::ColorOut::Embed,
+                                    };
+                                }
+                            }
+                        });
                     let before = form.format;
                     egui::ComboBox::from_label("Formato")
                         .selected_text(formats::info(form.format).name)
@@ -1345,6 +1477,14 @@ impl OrvalithApp {
                             ui.label(t);
                         }
                     });
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut form.preset_name)
+                                .hint_text("Nome da predefinição")
+                                .desired_width(150.0),
+                        );
+                        save_preset = ui.button("Salvar predefinição").clicked();
+                    });
                     ui.small("Exportar não altera o projeto nem o arquivo original; arquivos existentes não são sobrescritos sem confirmação do sistema.");
                     ui.separator();
                     ui.label("Lote (usa o formato e as opções acima)");
@@ -1365,6 +1505,26 @@ impl OrvalithApp {
                         cancel = ui.button("Fechar").clicked();
                     });
                 });
+            if save_preset {
+                let name: String = form.preset_name.trim().chars().take(60).collect();
+                if !name.is_empty() {
+                    let p = crate::presets::ExportPreset {
+                        name: name.clone(),
+                        ext: form.format.default_ext().to_string(),
+                        quality: form.quality,
+                        max_side: form.max_side,
+                        background: form.background,
+                        color: match form.color {
+                            orvalith_core::imageio::ColorOut::Embed => 0,
+                            orvalith_core::imageio::ColorOut::ToSrgb => 1,
+                            orvalith_core::imageio::ColorOut::Strip => 2,
+                        },
+                    };
+                    crate::presets::upsert(&mut self.prefs.export_presets, p, |x| x.name == name);
+                    form.preset_name.clear();
+                    self.prefs.save();
+                }
+            }
             if estimate {
                 form.estimate = Some(match self.docs.get(self.active) {
                     Some(o) => match formats::export(&o.doc, form.format, &form.opts()) {
@@ -1397,6 +1557,10 @@ impl OrvalithApp {
         self.batch_poll(ctx);
         self.actions_window(ctx);
         self.batch_window(ctx);
+        self.layout_sync();
+        self.presets_window(ctx);
+        self.history_window(ctx);
+        self.help_window(ctx);
         self.command_palette(ctx);
         self.shortcuts_editor(ctx);
         self.video_poll(ctx);

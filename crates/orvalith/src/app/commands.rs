@@ -165,6 +165,8 @@ pub fn action_id(a: &Action) -> String {
         Action::Presets => "window.presets".into(),
         Action::History => "window.history".into(),
         Action::OpenExample(i) => format!("help.example.{i}"),
+        Action::Workspace(i) => format!("workspace.{i}"),
+        Action::TogglePanel(k) => format!("panel.{k}"),
     }
 }
 
@@ -278,6 +280,17 @@ pub fn action_label(a: &Action) -> String {
         Action::Presets => "Janela: Predefinições".into(),
         Action::History => "Janela: Histórico e instantâneos".into(),
         Action::OpenExample(i) => format!("Ajuda: Abrir exemplo {}", i + 1),
+        Action::Workspace(i) => crate::presets::builtin_workspaces().get(*i).map_or_else(
+            || format!("Espaço de trabalho: {}", i + 1),
+            |w| format!("Espaço de trabalho: {}", w.name),
+        ),
+        Action::TogglePanel(k) => format!(
+            "Painel: alternar {}",
+            ["ferramentas", "camadas", "opções", "status"]
+                .get(*k as usize)
+                .copied()
+                .unwrap_or("?")
+        ),
     }
 }
 
@@ -292,6 +305,7 @@ fn default_table() -> Vec<DefaultEntry> {
         (Modifiers::NONE, Key::Comma, || Action::FrameStep(-1)),
         (Modifiers::NONE, Key::Period, || Action::FrameStep(1)),
         (cs, Key::P, || Action::Palette),
+        (Modifiers::NONE, Key::F1, || Action::Help),
         (Modifiers::SHIFT, Key::R, || Action::Tool(Tool::Liquify)),
         (Modifiers::NONE, Key::S, || Action::Tool(Tool::Clone)),
         (Modifiers::NONE, Key::J, || Action::Tool(Tool::SpotHeal)),
@@ -416,7 +430,7 @@ pub fn registry() -> Vec<CmdDef> {
         push(Arc::new(move || Action::AdjStart(i)), None);
         push(Arc::new(move || Action::AdjLayer(i)), None);
     }
-    let simple: [fn() -> Action; 15] = [
+    let simple: [fn() -> Action; 18] = [
         || Action::ToggleHist,
         || Action::ToggleTimeline,
         || Action::ToggleVideo,
@@ -427,6 +441,9 @@ pub fn registry() -> Vec<CmdDef> {
         || Action::ShortcutsEditor,
         || Action::Macros,
         || Action::Batch,
+        || Action::Help,
+        || Action::Presets,
+        || Action::History,
         || Action::PlaceObject(false),
         || Action::PlaceObject(true),
         || Action::Layer(LayerCmd::Rasterize),
@@ -435,6 +452,15 @@ pub fn registry() -> Vec<CmdDef> {
     ];
     for f in simple {
         push(Arc::new(f), None);
+    }
+    for i in 0..crate::presets::builtin_workspaces().len() {
+        push(Arc::new(move || Action::Workspace(i)), None);
+    }
+    for i in 0..orvalith_core::examples::EXAMPLES.len() {
+        push(Arc::new(move || Action::OpenExample(i)), None);
+    }
+    for k in 0..4u8 {
+        push(Arc::new(move || Action::TogglePanel(k)), None);
     }
     out
 }

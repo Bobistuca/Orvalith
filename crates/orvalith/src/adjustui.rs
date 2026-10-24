@@ -21,6 +21,7 @@ pub struct AdjUiState {
     range: usize,
     stop: usize,
     curve_drag: Option<usize>,
+    grad_name: String,
 }
 
 fn slider(
@@ -378,6 +379,42 @@ pub fn gradient_editor(ui: &mut egui::Ui, stops: &mut Vec<GradStop>, st: &mut Ad
             }
         }
     });
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut st.grad_name)
+                .hint_text("Nome da predefinição")
+                .desired_width(110.0),
+        );
+        if ui
+            .small_button("Salvar")
+            .on_hover_text("Guarda este gradiente nas predefinições")
+            .clicked()
+            && crate::presets::save_gradient(&st.grad_name, stops)
+        {
+            st.grad_name.clear();
+        }
+    });
+    let saved = crate::presets::gradients();
+    if !saved.is_empty() {
+        let mut remove = None;
+        ui.horizontal_wrapped(|ui| {
+            for (i, g) in saved.iter().enumerate() {
+                let r = ui
+                    .small_button(&g.name)
+                    .on_hover_text("Usar (botão secundário remove)");
+                if r.clicked() {
+                    *stops = g.stops.clone();
+                    ch = true;
+                }
+                if r.secondary_clicked() {
+                    remove = Some(i);
+                }
+            }
+        });
+        if let Some(i) = remove {
+            crate::presets::remove_gradient(i);
+        }
+    }
     if ch {
         stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
     }

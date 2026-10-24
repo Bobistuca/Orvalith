@@ -78,5 +78,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Ações e lote (Estágio 15.2)
 [actions.rs](../crates/orvalith-core/src/actions.rs): `Step`/`Macro` (serializáveis), `apply_step`/`run`, `run_batch` (falhas isoladas por arquivo com `catch_unwind`), `report_text`. UI: [app/actionsui.rs](../crates/orvalith/src/app/actionsui.rs); a gravação recolhe `Applied` das sessões de ajuste/filtro e `GeoState::recorded`.
 
+## Predefinições, espaços de trabalho e ajuda (Estágio 15.3)
+[presets.rs](../crates/orvalith/src/presets.rs) (tipos, sanitização, pacote, loja global de gradientes), [app/workflow.rs](../crates/orvalith/src/app/workflow.rs) (janelas de predefinições, histórico/instantâneos, ajuda), núcleo: [resources.rs](../crates/orvalith-core/src/resources.rs) (GPL/GGR) e [examples.rs](../crates/orvalith-core/src/examples.rs).
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

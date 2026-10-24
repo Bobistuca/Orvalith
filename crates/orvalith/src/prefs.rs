@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use orvalith_core::actions::Macro;
 use orvalith_core::paint::{BrushParams, BrushPreset};
 use orvalith_core::style::StylePreset;
+
+use crate::presets::{self, DocPreset, ExportPreset, GradPreset, Layout, Workspace};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -45,6 +47,12 @@ pub struct Prefs {
     pub frame_cache: u32,
     /// Tema de alto contraste (acessibilidade).
     pub high_contrast: bool,
+    /// Predefinições do usuário e disposição dos painéis.
+    pub doc_presets: Vec<DocPreset>,
+    pub export_presets: Vec<ExportPreset>,
+    pub gradient_presets: Vec<GradPreset>,
+    pub workspaces: Vec<Workspace>,
+    pub layout: Layout,
 }
 
 pub const MAX_RECENT: usize = 8;
@@ -72,6 +80,11 @@ impl Default for Prefs {
             snapshot_budget_mb: 256,
             frame_cache: 48,
             high_contrast: false,
+            doc_presets: Vec::new(),
+            export_presets: Vec::new(),
+            gradient_presets: Vec::new(),
+            workspaces: Vec::new(),
+            layout: Layout::default(),
         }
     }
 }
@@ -104,6 +117,10 @@ impl Prefs {
         self.history_budget_mb = self.history_budget_mb.clamp(16, 8192);
         self.snapshot_budget_mb = self.snapshot_budget_mb.clamp(16, 8192);
         self.frame_cache = self.frame_cache.clamp(4, 1024);
+        presets::sanitize_docs(&mut self.doc_presets);
+        presets::sanitize_exports(&mut self.export_presets);
+        presets::sanitize_grads(&mut self.gradient_presets);
+        presets::sanitize_workspaces(&mut self.workspaces);
         self.keymap.retain(|k, v| k.len() <= 80 && v.len() <= 40);
         if self.keymap.len() > 500 {
             self.keymap.clear();
@@ -209,6 +226,15 @@ mod tests {
                 params: BrushParams::default(),
             }],
             swatches: vec![[1, 2, 3, 255]],
+            doc_presets: vec![DocPreset {
+                name: "Meu".into(),
+                ..DocPreset::default()
+            }],
+            layout: Layout {
+                layers: false,
+                timeline: true,
+                ..Layout::default()
+            },
             ..Prefs::default()
         };
         prefs.save_to(&p).unwrap();

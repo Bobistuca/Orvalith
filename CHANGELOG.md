@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Estágio 15.3: predefinições (documento, exportação, gradiente, pacote), importação GPL/GGR, espaços de trabalho e painéis persistentes, histórico visual, instantâneos, ajuda local e exemplos originais.
 - Estágio 15.2: ações (macros) gravadas e reproduzíveis, processamento em lote com relatório por arquivo e proteção dos originais.
 - Estágio 15.1: registro de comandos, atalhos personalizáveis, paleta de comandos, preferências de memória/cache e alto contraste.
 - Estágio 14: vídeo e áudio básicos com FFmpeg externo isolado (metadados reais, prévia por quadro, trilhas, cortes e aparo arrastando, títulos/imagens, fade/dissolver, mixagem de áudio, exportação MP4/WebM com progresso e cancelamento, mídia relativa/relink); `.orva` v12; docs/MEDIA.md.

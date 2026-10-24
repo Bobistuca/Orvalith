@@ -123,6 +123,11 @@ impl History {
         self.undone.last().map(|c| c.label())
     }
 
+    /// Rótulos das ações desfeitas (refazíveis), da próxima a refazer à mais distante.
+    pub fn redo_labels(&self) -> Vec<&str> {
+        self.undone.iter().rev().map(|c| c.label()).collect()
+    }
+
     /// Rótulos das ações realizadas, da mais antiga à mais recente.
     pub fn labels(&self) -> Vec<&str> {
         self.done.iter().map(|c| c.label()).collect()

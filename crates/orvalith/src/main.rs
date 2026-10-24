@@ -10,6 +10,7 @@ mod layers_ui;
 mod liquifyui;
 mod objectui;
 mod prefs;
+mod presets;
 mod retouchui;
 mod select;
 mod styleui;

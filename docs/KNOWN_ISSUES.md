@@ -17,6 +17,7 @@
 - Malha de deformação: bordas externas sem suavização; os pontos de controle são fixos em 4×4.
 - Réguas desaparecem enquanto a visão está girada; o Mover não encaixa em guias.
 - A máscara de grupo não acompanha o conteúdo ao mover o grupo.
+- Estágio 15.3: predefinições de padrão e de textura não existem; espaços de trabalho só alternam painéis; instantâneos ficam só na memória e ignoram máscaras na contagem; importação limitada a .gpl e .ggr; janelas de predefinições, histórico e ajuda não foram exercitadas com mouse.
 - Estágio 15.2: ações agem em todas as camadas raster comuns (ignoram seleção e camada ativa); só 6 tipos de passo; o lote é sequencial e não processa PDF/vídeo; janelas de ações e lote não foram exercitadas com mouse; arquivos .orva no lote são relidos e exportados como imagem composta.
 - Estágio 15.1: atalhos e paleta não foram exercitados com o teclado real; teclas sem Ctrl são ignoradas enquanto um campo de texto tem o foco; o alto contraste não foi validado com ferramentas de acessibilidade.
 - Estágio 14: requer FFmpeg instalado separadamente; sem reprodução em tempo real com som; a prévia por quadro extrai um quadro por clipe a cada mudança (pode ser lenta com vídeos grandes); a exportação decodifica cada clipe num processo `ffmpeg` e compõe em RGBA na CPU (lenta em 4K); testes automatizados usam clipes sintéticos; arrasto/aparo na janela não foi exercitado com mouse; mídia em outra unidade de disco mantém o caminho absoluto.
