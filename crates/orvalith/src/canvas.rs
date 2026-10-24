@@ -65,6 +65,13 @@ pub struct OpenDoc {
     pub obj_ui: ObjUiState,
     /// Prévia na tela convertida do perfil do documento para sRGB.
     pub proof: bool,
+    /// Instante da linha do tempo exibido no canvas (prévia da animação) e a pele de cebola.
+    pub playhead: u32,
+    pub anim_frame: Option<u32>,
+    pub anim_onion: Option<(u32, u32, u32)>,
+    anim_key: (Option<u32>, Option<(u32, u32, u32)>),
+    /// Estado da linha do tempo antes de uma edição contínua (arrastar valores).
+    pub tl_drag: Option<Option<orvalith_core::anim::Timeline>>,
     preview: Option<std::sync::Arc<Preview>>,
     preview_key: (Option<usize>, bool),
     /// Máscara rápida: um documento cinza (255 = selecionado) editado com as ferramentas de pintura.
@@ -114,6 +121,11 @@ impl OpenDoc {
             style_ui: StyleUiState::default(),
             obj_ui: ObjUiState::default(),
             proof: true,
+            playhead: 0,
+            anim_frame: None,
+            anim_onion: None,
+            anim_key: (None, None),
+            tl_drag: None,
             preview: None,
             preview_key: (None, true),
             qm: None,
@@ -133,6 +145,12 @@ impl OpenDoc {
 
     /// Reconstrói a conversão de prévia quando o perfil (ou a opção) muda e refaz a textura.
     pub fn ensure_preview(&mut self) {
+        let akey = (self.anim_frame, self.anim_onion);
+        if akey != self.anim_key {
+            self.anim_key = akey;
+            self.texture = None;
+            self.dirty = None;
+        }
         let key = (
             self.doc
                 .icc
@@ -1074,7 +1092,25 @@ fn render_composite(o: &OpenDoc, r: PixRect) -> Vec<u8> {
         isolate: o.isolated,
         show_mask: o.mask_view,
     };
-    let mut px = compose::flatten_region_with(&o.doc, r, opts);
+    let mut px = match (o.anim_frame, o.doc.timeline.as_ref()) {
+        (Some(f), Some(tl)) => {
+            let full = match o.anim_onion {
+                Some((b, a, op)) => {
+                    orvalith_core::anim::render_onion(&o.doc, tl, f, b, a, op as f32 / 100.0)
+                }
+                None => orvalith_core::anim::render_frame(&o.doc, tl, f),
+            };
+            let rr = r.clamp_to(o.doc.width, o.doc.height);
+            let w = o.doc.width as usize;
+            let mut out = Vec::with_capacity(rr.w as usize * rr.h as usize * 4);
+            for y in rr.y..rr.bottom() {
+                let s = (y as usize * w + rr.x as usize) * 4;
+                out.extend_from_slice(&full[s..s + rr.w as usize * 4]);
+            }
+            out
+        }
+        _ => compose::flatten_region_with(&o.doc, r, opts),
+    };
     if let Some(p) = &o.preview {
         p.apply(&mut px);
     }

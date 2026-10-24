@@ -4,6 +4,7 @@ mod geocmds;
 mod io;
 mod pdfs;
 mod selops;
+mod timeline;
 
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -102,6 +103,8 @@ enum Action {
     FilterStart(usize),
     AdjLayer(usize),
     ToggleHist,
+    ToggleTimeline,
+    FrameStep(i32),
     ToggleComps,
     PlaceObject(bool),
     ColorDlg,
@@ -113,6 +116,7 @@ pub struct OrvalithApp {
     new_doc: Option<NewDocForm>,
     export: Option<ExportForm>,
     pdf_import: Option<pdfs::PdfImport>,
+    timeline: timeline::TimelineUi,
     pdf_export: Option<pdfs::PdfExport>,
     counter: u32,
     /// Mensagem (título, texto) para o usuário: erros, avisos e confirmações.
@@ -156,6 +160,7 @@ impl OrvalithApp {
             new_doc: None,
             export: None,
             pdf_import: None,
+            timeline: timeline::TimelineUi::default(),
             pdf_export: None,
             counter: 0,
             message: None,
@@ -350,6 +355,11 @@ impl OrvalithApp {
                 }
             }
             Action::ToggleHist => self.hist.open = !self.hist.open,
+            Action::ToggleTimeline => {
+                self.timeline.open = !self.timeline.open;
+                self.timeline.playing = false;
+            }
+            Action::FrameStep(d) => self.timeline_step(d),
             Action::ToggleComps => self.comps_ui.open = !self.comps_ui.open,
             Action::PlaceObject(linked) => self.place_object(linked),
             Action::ColorDlg => self.color_dlg.open = !self.color_dlg.open,
@@ -406,7 +416,9 @@ impl OrvalithApp {
         ctx.input_mut(|i| {
             // Variantes com Shift primeiro: Ctrl+X casaria também com Ctrl+Shift+X.
             let ca = Modifiers::COMMAND.plus(Modifiers::ALT);
-            let table: [Shortcut; 71] = [
+            let table: [Shortcut; 73] = [
+                (Modifiers::NONE, Key::Comma, || Action::FrameStep(-1)),
+                (Modifiers::NONE, Key::Period, || Action::FrameStep(1)),
                 (Modifiers::SHIFT, Key::R, || Action::Tool(Tool::Liquify)),
                 (Modifiers::NONE, Key::S, || Action::Tool(Tool::Clone)),
                 (Modifiers::NONE, Key::J, || Action::Tool(Tool::SpotHeal)),
@@ -735,6 +747,18 @@ impl eframe::App for OrvalithApp {
                             ui.close();
                         }
                     }
+                });
+                ui.menu_button("Animação", |ui| {
+                    if ui
+                        .add_enabled(has_doc, egui::Button::new("Linha do tempo"))
+                        .clicked()
+                    {
+                        actions.push(Action::ToggleTimeline);
+                        ui.close();
+                    }
+                    ui.small(
+                        "Quadro a quadro, quadros-chave, pele de cebola, GIF e sequência PNG.",
+                    );
                 });
                 ui.menu_button("Objetos", |ui| {
                     if ui
@@ -1077,6 +1101,9 @@ impl eframe::App for OrvalithApp {
                     }
                 });
             });
+
+            self.timeline_tick(&ctx);
+            self.timeline_panel(root);
 
             egui::Panel::top("options").show(root, |ui| {
                 if let (Some(t), Some(open)) = (

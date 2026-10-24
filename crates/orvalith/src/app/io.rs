@@ -260,7 +260,7 @@ impl OrvalithApp {
     }
 
     /// Caminho livre em `dir` (acrescenta " (n)" para nunca sobrescrever arquivos existentes).
-    fn free_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    pub(super) fn free_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
         let clean: String = stem
             .chars()
             .map(|c| if "\\/:*?\"<>|".contains(c) { '_' } else { c })

@@ -46,6 +46,9 @@ Cada camada ganha `object` opcional: `orig_w`/`orig_h`, `cx`/`cy`/`sx`/`sy`/`rot
 ## Versão 10 (Estágio 11.3)
 O manifesto ganha `comps`: lista (máx. 64) de composições `{name, states:[{layer, visible, opacity, fill, blend, styles:[bool]}]}` lida de forma tolerante; entradas inválidas ou listas fora dos limites são descartadas.
 
+## Versão 11 (Estágio 13)
+O manifesto ganha `timeline` opcional: `{fps, length, loop_count, frames:[{comp, hold}], tracks:[{layer, prop, keys:[{frame, value, ease}]}]}`, lido de forma tolerante e limitado ao ler (`Timeline::sanitize`: fps 1..=120, até 2000 quadros, 2000 trilhas, 5000 chaves por trilha, valores finitos).
+
 ## Evolução
 Campos desconhecidos no manifesto são ignorados; mudanças incompatíveis incrementam a versão. Um leitor recusa versões maiores que a sua com mensagem clara. Camadas futuras (grupos, máscaras, texto…) entrarão como novos campos/recursos no manifesto.
 

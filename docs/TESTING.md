@@ -21,6 +21,9 @@ fmt, clippy, 112 testes e build release OK; smoke test abre/fecha. Manual: duas 
 ## Estágio 3 (2026-10-23)
 fmt, clippy, 70 testes e build release OK; smoke test abre/fecha. Manual: Ctrl+N → B (pincel): arrastar rápido em círculos, conferir ausência de lacunas e que Ctrl+Z desfaz o traço inteiro; [ e ] mudam o tamanho; E apaga; I amostra (Alt = fundo); G balde (Tolerância/Contíguo); Shift+G gradiente (Esc cancela durante o arrasto); X troca cores, D restaura; salvar preset e reiniciar o app; salvar `.orva`, reabrir e comparar a pintura; testar em zoom 25%, 100% e 800%.
 
+## Estágio 13 (2026-10-23)
+fmt, clippy -D warnings, 386 testes (núcleo 287 + app 99) e build release OK; smoke test: abre e fecha. Manual: Animação → Linha do tempo → Criar animação; selecionar uma camada, no quadro 0 adicionar chave de Posição X, ir ao quadro 24 e mudar X; reproduzir; criar quadros ("Novo quadro") com camadas ligadas/desligadas; ligar a pele de cebola; Exportar GIF e abrir no navegador (repetição e tempo); Exportar sequência PNG; salvar `.orva` e reabrir.
+
 ## Estágio 12.3–12.5 (2026-10-23)
 fmt, clippy -D warnings, 376 testes (núcleo 278 + app 98) e build release OK; smoke test: abre e fecha. Manual: exportar um documento com grupos/máscaras como .psd e .psb e abrir em outro editor (pendente de Photoshop); abrir um .psd real; abrir um .pcraft real do PhotoCraft (pendente). Os testes de PDF levam ~20 s em modo debug (renderizador).
 

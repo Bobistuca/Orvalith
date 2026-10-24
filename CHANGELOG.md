@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Estágio 13: linha do tempo (quadro a quadro, quadros-chave com interpolação, pele de cebola, prévia com indicador de taxa), exportação em GIF animado e sequência PNG; `.orva` v11.
 - Estágio 12.3–12.5: PSD/PSB (leitura e escrita próprias, camadas/grupos/máscaras), leitura de `.pcraft` (manifesto v1, só leitura) e matriz de interoperabilidade com evidências e pendências.
 - Estágio 12.2: PDF local — importar páginas rasterizadas (senha, resolução, fundo, recorte) e exportar PDF raster multipágina.
 - Estágio 12.1: WebP, GIF, BMP, TIFF, TGA, ICO, QOI, PNM, HDR, EXR, SVG (rasterizado) e OpenRaster; janela de exportação com formato, avisos, estimativa de tamanho, miniaturas e lote (documentos, camadas, sprites); tabela real em docs/FORMAT_SUPPORT.md.

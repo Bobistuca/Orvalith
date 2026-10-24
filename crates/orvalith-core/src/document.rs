@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::adjust::Adjustment;
+use crate::anim::Timeline;
 use crate::blend::BlendMode;
 use crate::color::IccProfile;
 use crate::comps::Comp;
@@ -354,6 +355,8 @@ pub struct Document {
     pub icc: Option<IccProfile>,
     /// Composições de camadas (estados visuais nomeados).
     pub comps: Vec<Comp>,
+    /// Linha do tempo de animação (opcional).
+    pub timeline: Option<Timeline>,
     /// Há alterações não salvas.
     pub modified: bool,
     /// Incrementa a cada edição; descarta resultados assíncronos obsoletos.
@@ -393,6 +396,7 @@ impl Document {
             guides: Vec::new(),
             icc: None,
             comps: Vec::new(),
+            timeline: None,
             modified: false,
             revision: 0,
         })
@@ -415,6 +419,7 @@ impl Document {
             guides: Vec::new(),
             icc: None,
             comps: Vec::new(),
+            timeline: None,
             modified: false,
             revision: 0,
         }

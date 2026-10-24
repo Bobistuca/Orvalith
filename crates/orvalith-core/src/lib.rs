@@ -5,6 +5,7 @@
 
 pub mod adjops;
 pub mod adjust;
+pub mod anim;
 pub mod blend;
 pub mod color;
 pub mod compose;

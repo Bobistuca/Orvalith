@@ -66,5 +66,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## PSD/PSB e .pcraft (Estágio 12.3–12.4)
 [psd.rs](../crates/orvalith-core/src/psd.rs) (leitor/escritor próprios de PSD/PSB) e [pcraft.rs](../crates/orvalith-core/src/pcraft.rs) (adaptador somente-leitura do `.pcraft`, separado do `.orva`), ambos ligados por `formats.rs`.
 
+## Animação (Estágio 13)
+[anim.rs](../crates/orvalith-core/src/anim.rs): `Timeline` (quadros = composições + duração; trilhas de quadros-chave por camada/propriedade), `render_frame`/`render_onion`, `export_gif`, `png_sequence`, `TimelineEdit`. O canvas mostra `render_frame` quando `OpenDoc.anim_frame` está definido. UI: [app/timeline.rs](../crates/orvalith/src/app/timeline.rs).
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

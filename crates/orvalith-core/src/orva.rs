@@ -15,6 +15,7 @@ use flate2::Compression;
 use serde::{Deserialize, Serialize};
 
 use crate::adjust::Adjustment;
+use crate::anim::Timeline;
 use crate::blend::BlendMode;
 use crate::color::{IccProfile, MAX_PROFILE_BYTES};
 use crate::comps::{comps_sane, Comp};
@@ -26,7 +27,7 @@ use crate::style::{effects_sane, Effect};
 use crate::vector::ShapeSpec;
 
 pub const MAGIC: &[u8; 8] = b"ORVALITH";
-pub const CURRENT_VERSION: u32 = 10;
+pub const CURRENT_VERSION: u32 = 11;
 const MAX_CHANNELS: usize = 256;
 const HEADER_LEN: usize = 20;
 const MAX_MANIFEST: usize = 64 * 1024 * 1024;
@@ -80,6 +81,9 @@ struct Manifest {
     /// Versão 10: composições de camadas (JSON lido de forma tolerante).
     #[serde(default)]
     comps: Vec<serde_json::Value>,
+    /// Versão 11: linha do tempo de animação (JSON lido de forma tolerante).
+    #[serde(default)]
+    timeline: Option<serde_json::Value>,
 }
 
 /// Perfil ICC (versão 7): recurso zlib com os bytes do perfil.
@@ -384,6 +388,10 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
             })
             .collect(),
         icc: icc_entry,
+        timeline: doc
+            .timeline
+            .as_ref()
+            .and_then(|t| serde_json::to_value(t).ok()),
         comps: doc
             .comps
             .iter()
@@ -741,6 +749,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
     let layers = normalize(layers);
     let manifest_guides = manifest.guides;
     let manifest_comps = manifest.comps.clone();
+    let manifest_timeline = manifest.timeline.clone();
     let icc = match &manifest.icc {
         Some(ie) => {
             if ie.raw_len > MAX_PROFILE_BYTES as u64
@@ -794,6 +803,12 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
     );
     doc.channels = channels;
     doc.icc = icc;
+    doc.timeline = manifest_timeline
+        .and_then(|v| serde_json::from_value::<Timeline>(v).ok())
+        .map(|mut t| {
+            t.sanitize();
+            t
+        });
     let comps: Vec<Comp> = manifest_comps
         .iter()
         .filter_map(|v| serde_json::from_value::<Comp>(v.clone()).ok())
@@ -1284,5 +1299,54 @@ mod tests {
         let mut old = bytes;
         old[8..12].copy_from_slice(&9u32.to_le_bytes());
         let _ = read(&old).unwrap();
+    }
+    #[test]
+    fn timeline_roundtrips_stays_editable_and_hostile_values_are_sanitized() {
+        use crate::anim::{AnimFrame, Ease, Prop, Timeline};
+        let mut doc = Document::new("a", 12, 8, Some([1, 2, 3, 255])).unwrap();
+        doc.layers.push(Layer::filled("t", 12, 8, [200, 0, 0, 255]));
+        let id = doc.layers[1].id.0;
+        let mut tl = Timeline {
+            fps: 24.0,
+            length: 48,
+            loop_count: 3,
+            ..Timeline::default()
+        };
+        tl.set_key(id, Prop::X, 0, 0.0, Some(Ease::EaseInOut));
+        tl.set_key(id, Prop::X, 24, 10.0, None);
+        tl.frames.push(AnimFrame {
+            comp: crate::comps::capture(&doc, "a"),
+            hold: 4,
+        });
+        doc.timeline = Some(tl.clone());
+        let bytes = write(&doc).unwrap();
+        let back = read(&bytes).unwrap();
+        let t = back.timeline.clone().unwrap();
+        assert_eq!(t.fps, 24.0);
+        assert_eq!(t.loop_count, 3);
+        assert_eq!(t.total(), 4, "com quadros, a duração é a soma deles");
+        assert_eq!(t.value_at(id, Prop::X, 12), tl.value_at(id, Prop::X, 12));
+        // Reabrir e editar: mover um quadro-chave muda a renderização.
+        let mut again = back;
+        again
+            .timeline
+            .as_mut()
+            .unwrap()
+            .set_key(id, Prop::X, 24, 4.0, None);
+        assert_ne!(
+            crate::anim::render_frame(&again, again.timeline.as_ref().unwrap(), 3),
+            crate::anim::render_frame(&doc, &tl, 3)
+        );
+        // Valores absurdos são limitados ao ler.
+        let man_len = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        let man = String::from_utf8(bytes[HEADER_LEN..HEADER_LEN + man_len].to_vec()).unwrap();
+        let bad = man.replacen("\"fps\":24.0", "\"fps\":99999.0", 1);
+        assert_ne!(bad, man);
+        let mut out = bytes[..12].to_vec();
+        out.extend_from_slice(&(bad.len() as u32).to_le_bytes());
+        out.extend_from_slice(&crc32fast::hash(bad.as_bytes()).to_le_bytes());
+        out.extend_from_slice(bad.as_bytes());
+        out.extend_from_slice(&bytes[HEADER_LEN + man_len..]);
+        assert_eq!(read(&out).unwrap().timeline.unwrap().fps, 120.0);
     }
 }
