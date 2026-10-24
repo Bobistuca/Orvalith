@@ -81,5 +81,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Predefinições, espaços de trabalho e ajuda (Estágio 15.3)
 [presets.rs](../crates/orvalith/src/presets.rs) (tipos, sanitização, pacote, loja global de gradientes), [app/workflow.rs](../crates/orvalith/src/app/workflow.rs) (janelas de predefinições, histórico/instantâneos, ajuda), núcleo: [resources.rs](../crates/orvalith-core/src/resources.rs) (GPL/GGR) e [examples.rs](../crates/orvalith-core/src/examples.rs).
 
+## Estabilidade e distribuição (Estágio 16)
+[robustness.rs](../crates/orvalith-core/src/robustness.rs) (testes de corrupção e medições), [crashlog.rs](../crates/orvalith/src/crashlog.rs) (gancho de pânico), [scripts/](../scripts/) (pacote e licenças). Veja [[DISTRIBUTION]] e [[PERFORMANCE]].
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

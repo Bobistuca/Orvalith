@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Estágio 16: testes de robustez com arquivos corrompidos, relatório local de falhas, medições de desempenho, pacote portátil Windows, licenças de terceiros, versão 0.1.0 e licença MIT.
 - Estágio 15.3: predefinições (documento, exportação, gradiente, pacote), importação GPL/GGR, espaços de trabalho e painéis persistentes, histórico visual, instantâneos, ajuda local e exemplos originais.
 - Estágio 15.2: ações (macros) gravadas e reproduzíveis, processamento em lote com relatório por arquivo e proteção dos originais.
 - Estágio 15.1: registro de comandos, atalhos personalizáveis, paleta de comandos, preferências de memória/cache e alto contraste.

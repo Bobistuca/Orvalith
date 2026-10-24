@@ -35,6 +35,8 @@ pub mod pdf;
 pub mod psd;
 pub mod resources;
 pub mod retouch;
+#[cfg(test)]
+mod robustness;
 pub mod selection;
 pub mod snap;
 pub mod source;

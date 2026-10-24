@@ -1,0 +1,25 @@
+name: Release
+# Gera o pacote portátil quando uma tag "v*" é enviada. Não publica nada sozinho:
+# o zip e o SHA-256 ficam como artefato do workflow para conferência manual.
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+      - run: ./scripts/package.ps1
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orvalith-windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sha256sums
+          path: dist/SHA256SUMS.txt

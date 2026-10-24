@@ -164,4 +164,7 @@ tags: [orvalith, matriz]
 | Histórico visual (voltar/avançar até uma linha) e instantâneos nomeados com orçamento de memória | 15 | partial | `workflow.rs` teste (contagem de memória sem duplicar camadas); `history.rs` | instantâneos não vão para o disco e não incluem linha do tempo/vídeo; contagem ignora máscaras |
 | Ajuda local com busca e 4 exemplos originais (miniatura, pôster, retoque, animação) | 15 | partial | `examples.rs` testes; `workflow.rs` teste da busca | textos curtos; sem capturas de tela |
 | Acessibilidade: tudo acionável pela paleta/atalhos, alto contraste, escala da interface | 15 | partial | testes de registro de comandos | sem leitor de tela (limite do egui); foco e contraste não validados com ferramentas externas |
-| Demais estágios (16) | 16 | planned | — | ver [[ROADMAP]] |
+| Robustez: arquivos corrompidos/truncados/trocados de extensão em todos os formatos exportáveis e `.orva` não causam pânico | 16 | partial | `robustness.rs` testes (≈500 casos determinísticos + SVG hostil) | fuzzing guiado por cobertura não feito; só formatos que o próprio app exporta como semente |
+| Relatório local de falhas (`crash.log`) | 16 | partial | `crashlog.rs` testes (formato, acúmulo e limite) | o gancho de pânico real não foi provocado na interface |
+| Medições de desempenho documentadas | 16 | partial | `robustness.rs` (`perf_`, ignorado por padrão); [[PERFORMANCE]] | nenhuma otimização feita; uma execução por medida |
+| Pacote portátil Windows x64 com SHA-256 e licenças de terceiros | 16 | partial | `scripts/package.ps1` executado; exe do pacote abre e permanece em execução | sem instalador, assinatura, ícone/metadados no exe; workflow de release não executado |

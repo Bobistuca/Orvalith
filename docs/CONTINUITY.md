@@ -5,8 +5,8 @@ tags: [orvalith, continuidade]
 ---
 # Continuidade
 
-- **Estágio atual:** 15 (produtividade) concluído como *partial* → próximo: Estágio 16 (estabilidade, desempenho, distribuição). Pendências do 15: predefinições de padrão, UI não exercitada com mouse.
-- **Funciona:** fmt, clippy -D warnings, 422 testes (núcleo 308 + app 114) e build release OK; app abre/fecha (smoke). Texto/formas/caneta/nós só com eventos sintéticos e testes de núcleo. Pintura com mouse real NÃO foi exercitada (só testes de núcleo e de `ToolState::handle` com eventos sintéticos). Abrir/salvar/exportar via diálogos nativos NÃO foi exercitado manualmente; janela abre e fecha gravando `config.json`; canvas com zoom/pan/abas/status. Interação com mouse não foi exercitada automaticamente.
+- **Estágio atual:** 16 (estabilidade, desempenho, distribuição) concluído como *partial*; todos os estágios 0–16 têm uma primeira entrega. Próximo: validar com uso real (mouse/teclado), otimizar a composição, instalador/assinatura/ícone, tag de release. Pendências do 15: predefinições de padrão.
+- **Funciona:** fmt, clippy -D warnings, 426 testes (núcleo 310 + app 116) e build release OK; app abre/fecha (smoke). Texto/formas/caneta/nós só com eventos sintéticos e testes de núcleo. Pintura com mouse real NÃO foi exercitada (só testes de núcleo e de `ToolState::handle` com eventos sintéticos). Abrir/salvar/exportar via diálogos nativos NÃO foi exercitado manualmente; janela abre e fecha gravando `config.json`; canvas com zoom/pan/abas/status. Interação com mouse não foi exercitada automaticamente.
 - **Arquivos-chave:** `crates/orvalith-core/src/{document,compose,history}.rs`, `crates/orvalith/src/{main,app,app/io,canvas,prefs,theme}.rs`, `crates/orvalith-core/src/{orva,imageio,fsio,edit,view,paint,fill,geom,blend,compose,layerops,selection,transform,docops,snap,maskops}.rs`, `crates/orvalith/src/{tools,canvas,layers_ui,select,geometry}.rs`, `crates/orvalith/src/app/{io,selops,geocmds}.rs`.
 - **Executar:** `cargo run -p orvalith` (PATH: `%USERPROFILE%\.cargo\bin`).
 - **Ambiente:** Rust 1.99.1 via rustup; VS Build Tools 2022 instalado via winget (workload C++).

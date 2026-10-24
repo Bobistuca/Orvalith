@@ -1,9 +1,11 @@
+#![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 //! Orvalith: editor de imagens desktop, offline e sem login.
 
 mod adjustui;
 mod app;
 mod canvas;
 mod compsui;
+mod crashlog;
 mod filterui;
 mod geometry;
 mod layers_ui;
@@ -19,6 +21,7 @@ mod tools;
 mod vectool;
 
 fn main() -> eframe::Result<()> {
+    crashlog::install();
     let prefs = prefs::Prefs::load();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()

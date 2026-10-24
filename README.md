@@ -2,7 +2,10 @@
 
 Editor de imagens desktop escrito em Rust, **sem login, sem rede, armazenamento exclusivamente local**. Interface em português do Brasil. Plataforma principal: Windows 11 x64.
 
-## Estado atual (Estágio 14)
+## Baixar e executar (Windows x64)
+Gere o pacote portátil com `scripts\package.ps1` (veja [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)), descompacte e abra `Orvalith.exe`. Sem instalador, sem rede, sem login. Licença MIT; licenças de dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+## Estado atual (Estágio 16)
 - Janela nativa (eframe/egui) com tema próprio, estado vazio e diálogo "Novo documento".
 - Núcleo (`orvalith-core`): documento, camada raster RGBA8, compositor CPU (Normal + opacidade) e histórico desfazer/refazer, com testes.
 - Abre PNG/JPEG e projetos `.orva`, salva `.orva` (atômico), exporta PNG/JPEG, painel de camadas (visibilidade/opacidade) com desfazer/refazer, zoom/pan, abas.

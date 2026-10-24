@@ -11,3 +11,4 @@ graphify-out/cache/
 *.psb
 *.pcraft
 !tests/fixtures/**
+dist/

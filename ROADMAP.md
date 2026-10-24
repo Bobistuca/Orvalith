@@ -25,7 +25,7 @@ Estados: planned · in progress · partial · validated · blocked. Detalhes de 
 | 13 | Animação e linha do tempo | 4 | partial |
 | 14 | Vídeo e áudio básicos | 13 | partial |
 | 15 | Produtividade | todos | partial |
-| 16 | Estabilidade, desempenho, distribuição | todos | planned |
+| 16 | Estabilidade, desempenho, distribuição | todos | partial |
 
 ## Checklist do Estágio 0
 - [x] Inspeção do ambiente (sem Rust/MSVC; instalados com autorização)
