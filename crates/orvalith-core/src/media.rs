@@ -366,6 +366,19 @@ impl FrameCache {
         self.map.len()
     }
 
+    /// Ajusta a capacidade, descartando os quadros mais antigos se necessário.
+    pub fn set_cap(&mut self, cap: usize) {
+        self.cap = cap.max(1);
+        while self.map.len() > self.cap {
+            match self.order.pop_front() {
+                Some(old) => {
+                    self.map.remove(&old);
+                }
+                None => break,
+            }
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }

@@ -150,4 +150,8 @@ tags: [orvalith, matriz]
 | Exportar MP4 (H.264/AAC) e WebM (VP9/Opus) com progresso, cancelamento, resolução, taxa e qualidade | 14 | partial | `video.rs` teste de aceitação (2 clipes, aparo, título, dissolver, áudio; dimensões, taxa, duração, áudio e quadros conferidos) + cancelamento remove o arquivo parcial | feito com clipes sintéticos; players externos não automatizados |
 | Mídia relativa, ausente e relink | 14 | partial | `video.rs` teste (relativo, projeto movido, relink); `orva.rs` | caminhos em outra unidade ficam absolutos |
 | `.orva` v12: projeto de vídeo e imagens/títulos persistem | 14 | partial | `orva.rs` teste (ida e volta, hostil, CRC) | ver [[docs/ORVA_FORMAT]] |
-| Demais estágios (15–16) | 15–16 | planned | — | ver [[ROADMAP]] |
+| Registro de comandos com ids estáveis (~170 comandos: ferramentas, arquivo, edição, camadas, filtros, ajustes, janelas) | 15 | partial | `app/commands.rs` testes (ids únicos, rótulos, padrões sem conflito) | só ações já existentes no aplicativo; menus continuam escritos à mão |
+| Atalhos personalizáveis (capturar tecla, limpar, restaurar, detectar e desfazer conflito) persistidos nas preferências | 15 | partial | `commands.rs` testes (texto ↔ atalho, rebind desloca o dono anterior, ordem Ctrl+Shift antes de Ctrl, redefinir) | captura de teclas e janela não exercitadas com teclado real |
+| Paleta de comandos (Ctrl+Shift+P): busca por palavras, setas e Enter | 15 | partial | `commands.rs` testes de busca/ranking | interface não exercitada com teclado real |
+| Preferências de memória/cache (histórico por documento, instantâneos, cache de vídeo) e acessibilidade (alto contraste, escala) | 15 | partial | `prefs.rs` saneamento; `History::set_budget`/`FrameCache::set_cap` | alto contraste não validado por ferramenta de acessibilidade; sem leitor de tela testado |
+| Demais estágios (15.2–15.3 e 16) | 15–16 | planned | — | ver [[ROADMAP]] |

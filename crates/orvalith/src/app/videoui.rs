@@ -193,6 +193,12 @@ fn px_to_frame(x: f32, left: f32, ppf: f32) -> u32 {
     ((x - left) / ppf).round().max(0.0) as u32
 }
 
+impl VideoUi {
+    pub(super) fn set_cache(&mut self, n: usize) {
+        self.cache.set_cap(n);
+    }
+}
+
 impl OrvalithApp {
     fn ensure_ffmpeg(&mut self) {
         if self.video.ffmpeg.is_none() {

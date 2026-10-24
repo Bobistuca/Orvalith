@@ -72,5 +72,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Vídeo e áudio (Estágio 14)
 [media.rs](../crates/orvalith-core/src/media.rs) (FFmpeg/ffprobe isolados, `FrameCache`) e [video.rs](../crates/orvalith-core/src/video.rs) (`VideoProject`, `compose_frame`, `audio_plan`, `export`). Detalhes de instalação, licença e limites em [MEDIA.md](MEDIA.md). UI: [app/videoui.rs](../crates/orvalith/src/app/videoui.rs).
 
+## Comandos e atalhos (Estágio 15.1)
+[app/commands.rs](../crates/orvalith/src/app/commands.rs): `registry()` (comandos com id/rótulo/atalho padrão), `Keymap` (tabela ordenada que o teclado consulta), `rebind`/`effective` (diferenças guardadas em `prefs.keymap`), paleta e editor de atalhos.
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).

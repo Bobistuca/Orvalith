@@ -24,7 +24,7 @@ Estados: planned · in progress · partial · validated · blocked. Detalhes de 
 | 12 | Imagens, PDF, PSD/PSB, .pcraft | 4, 7, 8 | partial |
 | 13 | Animação e linha do tempo | 4 | partial |
 | 14 | Vídeo e áudio básicos | 13 | partial |
-| 15 | Produtividade | todos | planned |
+| 15 | Produtividade | todos | partial |
 | 16 | Estabilidade, desempenho, distribuição | todos | planned |
 
 ## Checklist do Estágio 0

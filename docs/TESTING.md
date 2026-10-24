@@ -21,6 +21,9 @@ fmt, clippy, 112 testes e build release OK; smoke test abre/fecha. Manual: duas 
 ## Estágio 3 (2026-10-23)
 fmt, clippy, 70 testes e build release OK; smoke test abre/fecha. Manual: Ctrl+N → B (pincel): arrastar rápido em círculos, conferir ausência de lacunas e que Ctrl+Z desfaz o traço inteiro; [ e ] mudam o tamanho; E apaga; I amostra (Alt = fundo); G balde (Tolerância/Contíguo); Shift+G gradiente (Esc cancela durante o arrasto); X troca cores, D restaura; salvar preset e reiniciar o app; salvar `.orva`, reabrir e comparar a pintura; testar em zoom 25%, 100% e 800%.
 
+## Estágio 15.1 (2026-10-23)
+fmt, clippy -D warnings, 404 testes (núcleo 298 + app 106) e build release OK; smoke test: abre e fecha. Manual: Ctrl+Shift+P e digitar "mediana"; Editar → Atalhos de teclado… → Definir… num comando, conferir conflito e Restaurar; reabrir o aplicativo e ver o atalho mantido; Preferências → Alto contraste.
+
 ## Estágio 14 (2026-10-23)
 fmt, clippy -D warnings, 399 testes (núcleo 298 + app 101) e build release OK; smoke test: abre e fecha. Os testes de mídia usam o FFmpeg real (FFmpeg 9.0.1 gyan.dev full) e são pulados se ele não existir; o de aceitação monta 2 clipes (vermelho/azul com áudio), apara, adiciona título, dissolve, exporta e confere com o ffprobe (dimensões, taxa, duração, áudio) e re-extração de quadros. Manual: Animação → Vídeo… → Adicionar mídia…; arrastar bordas e corpo dos clipes; Documento atual como título; Dissolver; Exportar; abrir o MP4 em outro player (pendente); salvar `.orva`, mover a pasta e reabrir; apagar a mídia e usar Localizar….
 

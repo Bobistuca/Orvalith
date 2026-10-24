@@ -3,6 +3,7 @@
 //! Gravadas apenas em `%APPDATA%\Orvalith\config.json` (ou `~/.config/orvalith/`),
 //! de forma atômica. Nunca contêm documentos, senhas ou dados pessoais.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use orvalith_core::paint::{BrushParams, BrushPreset};
@@ -31,6 +32,16 @@ pub struct Prefs {
     pub swatches: Vec<[u8; 4]>,
     /// Predefinições de estilos de camada.
     pub style_presets: Vec<StylePreset>,
+    /// Atalhos personalizados: id do comando → "Ctrl+Shift+K" (texto vazio = sem atalho).
+    pub keymap: BTreeMap<String, String>,
+    /// Orçamento de memória do histórico de cada documento (MiB).
+    pub history_budget_mb: u32,
+    /// Orçamento de memória dos instantâneos (MiB).
+    pub snapshot_budget_mb: u32,
+    /// Quadros de vídeo guardados no cache de prévia.
+    pub frame_cache: u32,
+    /// Tema de alto contraste (acessibilidade).
+    pub high_contrast: bool,
 }
 
 pub const MAX_RECENT: usize = 8;
@@ -52,6 +63,11 @@ impl Default for Prefs {
             brush_presets: Vec::new(),
             swatches: Vec::new(),
             style_presets: Vec::new(),
+            keymap: BTreeMap::new(),
+            history_budget_mb: 256,
+            snapshot_budget_mb: 256,
+            frame_cache: 48,
+            high_contrast: false,
         }
     }
 }
@@ -77,6 +93,13 @@ impl Prefs {
         self.brush_presets.truncate(200);
         self.swatches.truncate(200);
         self.style_presets.truncate(100);
+        self.history_budget_mb = self.history_budget_mb.clamp(16, 8192);
+        self.snapshot_budget_mb = self.snapshot_budget_mb.clamp(16, 8192);
+        self.frame_cache = self.frame_cache.clamp(4, 1024);
+        self.keymap.retain(|k, v| k.len() <= 80 && v.len() <= 40);
+        if self.keymap.len() > 500 {
+            self.keymap.clear();
+        }
         self.style_presets
             .retain(|p| orvalith_core::style::effects_sane(&p.effects));
         self

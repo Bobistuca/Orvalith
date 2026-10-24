@@ -1,5 +1,6 @@
 //! Estado da aplicação e interface: menus, abas, camadas, diálogos, atalhos e status.
 
+mod commands;
 mod geocmds;
 mod io;
 mod pdfs;
@@ -11,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Instant;
 
-use eframe::egui::{self, Key, Modifiers};
+use eframe::egui::{self, Key};
 use orvalith_core::{Document, Layer};
 
 use crate::canvas::OpenDoc;
@@ -70,9 +71,7 @@ pub(crate) enum BatchKind {
     Sprites(u32),
 }
 
-/// Atalho: modificadores, tecla e a ação que dispara.
-type Shortcut = (Modifiers, Key, fn() -> Action);
-
+#[allow(dead_code)] // Ajuda, ações, lote, predefinições e histórico chegam nas próximas subetapas.
 enum Action {
     New,
     Open,
@@ -110,6 +109,14 @@ enum Action {
     ToggleComps,
     PlaceObject(bool),
     ColorDlg,
+    Palette,
+    ShortcutsEditor,
+    Help,
+    Macros,
+    Batch,
+    Presets,
+    History,
+    OpenExample(usize),
 }
 
 pub struct OrvalithApp {
@@ -119,6 +126,9 @@ pub struct OrvalithApp {
     export: Option<ExportForm>,
     pdf_import: Option<pdfs::PdfImport>,
     timeline: timeline::TimelineUi,
+    cmd: commands::CmdUi,
+    keymap: commands::Keymap,
+    queued: Vec<Action>,
     video: videoui::VideoUi,
     pdf_export: Option<pdfs::PdfExport>,
     counter: u32,
@@ -157,6 +167,7 @@ impl OrvalithApp {
         let recovery_found = io::scan_recovery(prefs.recovery_path());
         let tools = ToolState::new(prefs.brush, prefs.fg, prefs.bg);
         crate::styleui::load_presets(prefs.style_presets.clone());
+        let prefs_keymap = prefs.keymap.clone();
         Self {
             docs: Vec::new(),
             active: 0,
@@ -164,6 +175,9 @@ impl OrvalithApp {
             export: None,
             pdf_import: None,
             timeline: timeline::TimelineUi::default(),
+            cmd: commands::CmdUi::default(),
+            keymap: commands::Keymap::build(&prefs_keymap),
+            queued: Vec::new(),
             video: videoui::VideoUi::default(),
             pdf_export: None,
             counter: 0,
@@ -368,6 +382,16 @@ impl OrvalithApp {
             Action::ToggleComps => self.comps_ui.open = !self.comps_ui.open,
             Action::PlaceObject(linked) => self.place_object(linked),
             Action::ColorDlg => self.color_dlg.open = !self.color_dlg.open,
+            Action::Palette => {
+                self.cmd.palette = !self.cmd.palette;
+            }
+            Action::ShortcutsEditor => self.cmd.editor = !self.cmd.editor,
+            Action::Help
+            | Action::Macros
+            | Action::Batch
+            | Action::Presets
+            | Action::History
+            | Action::OpenExample(_) => {}
             Action::Select(c) => self.run_select(c),
             Action::CopySel(cut) => self.copy_cut(cut),
             Action::DeleteKey => self.delete_key(),
@@ -411,107 +435,17 @@ impl OrvalithApp {
         }
     }
 
-    fn collect_shortcuts(ctx: &egui::Context, actions: &mut Vec<Action>) {
+    fn collect_shortcuts(
+        ctx: &egui::Context,
+        keymap: &commands::Keymap,
+        actions: &mut Vec<Action>,
+    ) {
         // Atalhos só valem quando nenhum campo de texto tem o foco do teclado.
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        const C: Modifiers = Modifiers::COMMAND;
-        let cs = Modifiers::COMMAND.plus(Modifiers::SHIFT);
         ctx.input_mut(|i| {
-            // Variantes com Shift primeiro: Ctrl+X casaria também com Ctrl+Shift+X.
-            let ca = Modifiers::COMMAND.plus(Modifiers::ALT);
-            let table: [Shortcut; 73] = [
-                (Modifiers::NONE, Key::Comma, || Action::FrameStep(-1)),
-                (Modifiers::NONE, Key::Period, || Action::FrameStep(1)),
-                (Modifiers::SHIFT, Key::R, || Action::Tool(Tool::Liquify)),
-                (Modifiers::NONE, Key::S, || Action::Tool(Tool::Clone)),
-                (Modifiers::NONE, Key::J, || Action::Tool(Tool::SpotHeal)),
-                (Modifiers::NONE, Key::H, || Action::Tool(Tool::Patch)),
-                (Modifiers::NONE, Key::Y, || Action::Tool(Tool::RedEye)),
-                (Modifiers::NONE, Key::R, || Action::Tool(Tool::Retouch)),
-                (Modifiers::NONE, Key::T, || Action::Tool(Tool::Text)),
-                (Modifiers::NONE, Key::U, || Action::Tool(Tool::Shape)),
-                (Modifiers::NONE, Key::P, || Action::Tool(Tool::Pen)),
-                (Modifiers::NONE, Key::A, || Action::Tool(Tool::Node)),
-                (ca, Key::G, || Action::Layer(LayerCmd::ToggleClip)),
-                (cs, Key::Semicolon, || Action::Geo(GeoCmd::ToggleSnap)),
-                (ca, Key::I, || Action::Geo(GeoCmd::ImageSize)),
-                (ca, Key::C, || Action::Geo(GeoCmd::CanvasSize)),
-                (C, Key::T, || Action::Geo(GeoCmd::Transform(TMode::Free))),
-                (C, Key::R, || Action::Geo(GeoCmd::ToggleRulers)),
-                (C, Key::Quote, || Action::Geo(GeoCmd::ToggleGrid)),
-                (C, Key::Semicolon, || Action::Geo(GeoCmd::ToggleGuides)),
-                (Modifiers::NONE, Key::C, || Action::Tool(Tool::Crop)),
-                (Modifiers::ALT, Key::ArrowLeft, || {
-                    Action::View(ViewCmd::Rotate(-15.0))
-                }),
-                (Modifiers::ALT, Key::ArrowRight, || {
-                    Action::View(ViewCmd::Rotate(15.0))
-                }),
-                (Modifiers::ALT, Key::ArrowUp, || {
-                    Action::View(ViewCmd::ResetRotation)
-                }),
-                (cs, Key::I, || Action::Select(SelCmd::Invert)),
-                (C, Key::A, || Action::Select(SelCmd::All)),
-                (C, Key::D, || Action::Select(SelCmd::Deselect)),
-                (Modifiers::ALT, Key::Backspace, || Action::Fill(false)),
-                (C, Key::Backspace, || Action::Fill(true)),
-                (Modifiers::NONE, Key::Enter, || Action::Confirm),
-                (Modifiers::NONE, Key::Q, || {
-                    Action::Select(SelCmd::QuickMask)
-                }),
-                (Modifiers::SHIFT, Key::M, || Action::Tool(Tool::Ellipse)),
-                (Modifiers::NONE, Key::M, || Action::Tool(Tool::Marquee)),
-                (Modifiers::SHIFT, Key::L, || Action::Tool(Tool::PolyLasso)),
-                (Modifiers::NONE, Key::L, || Action::Tool(Tool::Lasso)),
-                (Modifiers::NONE, Key::W, || Action::Tool(Tool::Wand)),
-                (cs, Key::N, || Action::Layer(LayerCmd::New)),
-                (cs, Key::G, || Action::Layer(LayerCmd::Ungroup)),
-                (cs, Key::S, || Action::SaveAs),
-                (cs, Key::E, || Action::Export),
-                (cs, Key::Z, || Action::Redo),
-                (C, Key::Y, || Action::Redo),
-                (C, Key::Z, || Action::Undo),
-                (C, Key::S, || Action::Save),
-                (C, Key::O, || Action::Open),
-                (C, Key::N, || Action::New),
-                (C, Key::W, || Action::Close),
-                (Modifiers::CTRL, Key::Tab, || Action::NextTab),
-                (C, Key::Num0, || Action::View(ViewCmd::Fit)),
-                (C, Key::Num1, || Action::View(ViewCmd::Actual)),
-                (C, Key::Equals, || Action::View(ViewCmd::ZoomIn)),
-                (C, Key::Plus, || Action::View(ViewCmd::ZoomIn)),
-                (C, Key::Minus, || Action::View(ViewCmd::ZoomOut)),
-                (C, Key::F4, || Action::Close),
-                (Modifiers::NONE, Key::F5, || Action::View(ViewCmd::Fit)),
-                // Ferramentas (Shift+G antes de G).
-                (C, Key::J, || Action::Layer(LayerCmd::Duplicate)),
-                (C, Key::G, || Action::Layer(LayerCmd::Group)),
-                (C, Key::E, || Action::Layer(LayerCmd::MergeSelected)),
-                (C, Key::CloseBracket, || Action::Layer(LayerCmd::Up)),
-                (C, Key::OpenBracket, || Action::Layer(LayerCmd::Down)),
-                (Modifiers::NONE, Key::Delete, || Action::DeleteKey),
-                (Modifiers::NONE, Key::V, || Action::Tool(Tool::Move)),
-                (Modifiers::SHIFT, Key::G, || Action::Tool(Tool::Gradient)),
-                (Modifiers::NONE, Key::B, || Action::Tool(Tool::Brush)),
-                (Modifiers::NONE, Key::N, || Action::Tool(Tool::Pencil)),
-                (Modifiers::NONE, Key::E, || Action::Tool(Tool::Eraser)),
-                (Modifiers::NONE, Key::I, || Action::Tool(Tool::Eyedropper)),
-                (Modifiers::NONE, Key::G, || Action::Tool(Tool::Bucket)),
-                (Modifiers::NONE, Key::X, || Action::SwapColors),
-                (Modifiers::NONE, Key::D, || Action::DefaultColors),
-                (Modifiers::NONE, Key::OpenBracket, || Action::BrushSize(0.9)),
-                (Modifiers::NONE, Key::CloseBracket, || {
-                    Action::BrushSize(1.1)
-                }),
-                (Modifiers::NONE, Key::Escape, || Action::CancelTool),
-            ];
-            for (m, k, make) in table {
-                if i.consume_key(m, k) {
-                    actions.push(make());
-                }
-            }
+            actions.extend(keymap.collect(i));
             // O egui-winit converte Ctrl+C/Ctrl+V em eventos próprios (sem evento de tecla).
             for e in &i.events {
                 match e {
@@ -547,7 +481,10 @@ impl eframe::App for OrvalithApp {
         for f in ctx.input(|i| i.raw.dropped_files.clone()) {
             actions.push(Action::OpenPath(f.path().to_path_buf()));
         }
-        Self::collect_shortcuts(&ctx, &mut actions);
+        if !self.cmd.capturing() {
+            Self::collect_shortcuts(&ctx, &self.keymap, &mut actions);
+        }
+        actions.append(&mut self.queued);
         let space_down = !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_down(Key::Space));
         let has_doc = !self.docs.is_empty();
         let (can_undo, can_redo, undo_label, redo_label) = match self.docs.get(self.active) {
@@ -676,6 +613,14 @@ impl eframe::App for OrvalithApp {
                         }
                     }
                     ui.separator();
+                    if ui.button("Paleta de comandos…  Ctrl+Shift+P").clicked() {
+                        actions.push(Action::Palette);
+                        ui.close();
+                    }
+                    if ui.button("Atalhos de teclado…").clicked() {
+                        actions.push(Action::ShortcutsEditor);
+                        ui.close();
+                    }
                     if ui.button("Preferências…").clicked() {
                         self.prefs_open = true;
                         ui.close();
@@ -1430,6 +1375,16 @@ impl OrvalithApp {
         }
 
         self.adjust_windows(ctx);
+        // Orçamentos de memória das preferências.
+        let hb = (self.prefs.history_budget_mb as usize) << 20;
+        for d in &mut self.docs {
+            if d.history.budget() != Some(hb) {
+                d.history.set_budget(hb);
+            }
+        }
+        self.video.set_cache(self.prefs.frame_cache as usize);
+        self.command_palette(ctx);
+        self.shortcuts_editor(ctx);
         self.video_poll(ctx);
         self.video_window(ctx);
         self.pdf_import_window(ctx);
@@ -1568,6 +1523,10 @@ impl OrvalithApp {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.checkbox(&mut self.prefs.dark_theme, "Tema escuro");
+                ui.checkbox(
+                    &mut self.prefs.high_contrast,
+                    "Alto contraste (acessibilidade)",
+                );
                 ui.horizontal(|ui| {
                     ui.label("Escala da interface");
                     ui.add(egui::Slider::new(&mut self.prefs.ui_scale, 0.75..=2.0).step_by(0.05));
@@ -1602,6 +1561,30 @@ impl OrvalithApp {
                     }
                 });
                 ui.separator();
+                ui.label("Memória e cache");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut self.prefs.history_budget_mb)
+                            .range(16..=8192)
+                            .suffix(" MiB")
+                            .prefix("histórico por documento "),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut self.prefs.snapshot_budget_mb)
+                            .range(16..=8192)
+                            .suffix(" MiB")
+                            .prefix("instantâneos "),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut self.prefs.frame_cache)
+                            .range(4..=1024)
+                            .prefix("cache de vídeo (quadros) "),
+                    );
+                });
+                ui.small("O histórico descarta as ações mais antigas ao passar do orçamento.");
+                ui.separator();
                 ui.checkbox(&mut self.prefs.recent_enabled, "Lembrar arquivos recentes");
                 if !self.prefs.recent_enabled {
                     self.prefs.recent.clear();
@@ -1612,7 +1595,10 @@ impl OrvalithApp {
                 ui.small("As preferências ficam somente neste computador.");
             });
         if self.prefs.dark_theme != before.dark_theme {
-            theme::apply(ctx, self.prefs.dark_theme);
+            theme::apply(ctx, self.prefs.dark_theme, self.prefs.high_contrast);
+        }
+        if self.prefs.high_contrast != before.high_contrast {
+            theme::apply(ctx, self.prefs.dark_theme, self.prefs.high_contrast);
         }
         if (self.prefs.ui_scale - before.ui_scale).abs() > f32::EPSILON {
             ctx.set_zoom_factor(self.prefs.ui_scale);

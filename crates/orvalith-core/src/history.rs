@@ -35,6 +35,17 @@ impl History {
         }
     }
 
+    /// Orçamento atual de memória (bytes), se houver.
+    pub fn budget(&self) -> Option<usize> {
+        self.budget
+    }
+
+    /// Altera o orçamento; ações antigas são descartadas se o novo limite for menor.
+    pub fn set_budget(&mut self, budget: usize) {
+        self.budget = Some(budget);
+        self.enforce_budget();
+    }
+
     /// Define o orçamento de memória; as ações mais antigas são descartadas ao excedê-lo.
     pub fn with_budget(budget: usize) -> Self {
         Self {

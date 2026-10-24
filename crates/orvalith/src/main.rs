@@ -30,7 +30,7 @@ fn main() -> eframe::Result<()> {
         "Orvalith",
         options,
         Box::new(move |cc| {
-            theme::apply(&cc.egui_ctx, prefs.dark_theme);
+            theme::apply(&cc.egui_ctx, prefs.dark_theme, prefs.high_contrast);
             cc.egui_ctx.set_zoom_factor(prefs.ui_scale);
             Ok(Box::new(app::OrvalithApp::new(prefs)))
         }),
