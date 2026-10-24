@@ -49,6 +49,9 @@ O manifesto ganha `comps`: lista (máx. 64) de composições `{name, states:[{la
 ## Versão 11 (Estágio 13)
 O manifesto ganha `timeline` opcional: `{fps, length, loop_count, frames:[{comp, hold}], tracks:[{layer, prop, keys:[{frame, value, ease}]}]}`, lido de forma tolerante e limitado ao ler (`Timeline::sanitize`: fps 1..=120, até 2000 quadros, 2000 trilhas, 5000 chaves por trilha, valores finitos).
 
+## Versão 12 (Estágio 14)
+O manifesto ganha `video` (projeto: tamanho, taxa, trilhas e clipes; limites em `VideoProject::sanitize`: 64 trilhas, 2000 clipes, valores finitos) e `video_stills` (um recurso zlib RGBA por imagem/título, validado: lados ≤ 16384, `raw_len == w·h·4`, dentro do arquivo, CRC, conta no limite de 2 GiB). Clipes de mídia guardam o caminho absoluto e o relativo à pasta do projeto (`rel`); a mídia em si **não** é gravada no `.orva`. Imagens sem recurso válido saem do projeto.
+
 ## Evolução
 Campos desconhecidos no manifesto são ignorados; mudanças incompatíveis incrementam a versão. Um leitor recusa versões maiores que a sua com mensagem clara. Camadas futuras (grupos, máscaras, texto…) entrarão como novos campos/recursos no manifesto.
 

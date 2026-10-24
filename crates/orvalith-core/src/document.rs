@@ -16,6 +16,7 @@ use crate::object::SmartObject;
 use crate::source::LayerSource;
 use crate::style::Effect;
 use crate::vector::ShapeSpec;
+use crate::video::VideoProject;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -357,6 +358,8 @@ pub struct Document {
     pub comps: Vec<Comp>,
     /// Linha do tempo de animação (opcional).
     pub timeline: Option<Timeline>,
+    /// Projeto de vídeo (trilhas e clipes) anexado ao documento.
+    pub video: Option<VideoProject>,
     /// Há alterações não salvas.
     pub modified: bool,
     /// Incrementa a cada edição; descarta resultados assíncronos obsoletos.
@@ -397,6 +400,7 @@ impl Document {
             icc: None,
             comps: Vec::new(),
             timeline: None,
+            video: None,
             modified: false,
             revision: 0,
         })
@@ -420,6 +424,7 @@ impl Document {
             icc: None,
             comps: Vec::new(),
             timeline: None,
+            video: None,
             modified: false,
             revision: 0,
         }

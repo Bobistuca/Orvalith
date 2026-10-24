@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Estágio 14: vídeo e áudio básicos com FFmpeg externo isolado (metadados reais, prévia por quadro, trilhas, cortes e aparo arrastando, títulos/imagens, fade/dissolver, mixagem de áudio, exportação MP4/WebM com progresso e cancelamento, mídia relativa/relink); `.orva` v12; docs/MEDIA.md.
 - Estágio 13: linha do tempo (quadro a quadro, quadros-chave com interpolação, pele de cebola, prévia com indicador de taxa), exportação em GIF animado e sequência PNG; `.orva` v11.
 - Estágio 12.3–12.5: PSD/PSB (leitura e escrita próprias, camadas/grupos/máscaras), leitura de `.pcraft` (manifesto v1, só leitura) e matriz de interoperabilidade com evidências e pendências.
 - Estágio 12.2: PDF local — importar páginas rasterizadas (senha, resolução, fundo, recorte) e exportar PDF raster multipágina.

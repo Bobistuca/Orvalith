@@ -139,7 +139,20 @@ impl OrvalithApp {
             Ok(l) => {
                 let missing = orvalith_core::vecops::missing_fonts(&l.doc);
                 let mut doc = l.doc;
-                let link_warnings = orvalith_core::object::resolve_links(&mut doc);
+                let mut link_warnings = orvalith_core::object::resolve_links(&mut doc);
+                if let Some(v) = doc.video.as_mut() {
+                    let missing = v.resolve_media(path.parent());
+                    if !missing.is_empty() {
+                        link_warnings.push(format!(
+                            "Mídia de vídeo ausente (use Animação → Vídeo… → Localizar):
+- {}",
+                            missing.join(
+                                "
+- "
+                            )
+                        ));
+                    }
+                }
                 let mut open = OpenDoc::new(doc);
                 if l.project {
                     open.path = Some(path.clone());
@@ -191,6 +204,11 @@ impl OrvalithApp {
                 }
             }
         };
+        // Mídia do vídeo: grava os caminhos relativos à pasta do projeto antes de salvar.
+        if let (Some(v), Some(dir)) = (self.docs[idx].doc.video.as_mut(), path.parent()) {
+            v.relativize(dir);
+        }
+        let open = &self.docs[idx];
         let bytes = match orva::write(&open.doc) {
             Ok(b) => b,
             Err(e) => {

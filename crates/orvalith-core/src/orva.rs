@@ -25,9 +25,10 @@ use crate::object::{link_allowed, SmartFilter, SmartObject, MAX_FILTERS};
 use crate::source::{shape_sane, LayerSource};
 use crate::style::{effects_sane, Effect};
 use crate::vector::ShapeSpec;
+use crate::video::{ClipSource, VideoProject};
 
 pub const MAGIC: &[u8; 8] = b"ORVALITH";
-pub const CURRENT_VERSION: u32 = 11;
+pub const CURRENT_VERSION: u32 = 12;
 const MAX_CHANNELS: usize = 256;
 const HEADER_LEN: usize = 20;
 const MAX_MANIFEST: usize = 64 * 1024 * 1024;
@@ -84,6 +85,20 @@ struct Manifest {
     /// Versão 11: linha do tempo de animação (JSON lido de forma tolerante).
     #[serde(default)]
     timeline: Option<serde_json::Value>,
+    /// Versão 12: projeto de vídeo (JSON tolerante) e as imagens/títulos gravados como recursos.
+    #[serde(default)]
+    video: Option<serde_json::Value>,
+    #[serde(default)]
+    video_stills: Vec<StillEntry>,
+}
+
+/// Imagem/título de um clipe de vídeo (versão 12).
+#[derive(Serialize, Deserialize, Clone)]
+struct StillEntry {
+    clip: u64,
+    w: u32,
+    h: u32,
+    data: BlobRes,
 }
 
 /// Perfil ICC (versão 7): recurso zlib com os bytes do perfil.
@@ -165,7 +180,7 @@ struct LayerEntry {
 }
 
 /// Recurso zlib dentro do blob.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct BlobRes {
     offset: u64,
     stored_len: u64,
@@ -370,6 +385,30 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
         }
         None => None,
     };
+    let mut video_stills = Vec::new();
+    if let Some(v) = &doc.video {
+        for c in v.tracks.iter().flat_map(|t| &t.clips) {
+            if let ClipSource::Still {
+                w,
+                h,
+                pixels: Some(px),
+            } = &c.source
+            {
+                let (offset, stored_len, crc32) = pack(px, &mut blob)?;
+                video_stills.push(StillEntry {
+                    clip: c.id,
+                    w: *w,
+                    h: *h,
+                    data: BlobRes {
+                        offset,
+                        stored_len,
+                        raw_len: px.len() as u64,
+                        crc32,
+                    },
+                });
+            }
+        }
+    }
     let manifest = Manifest {
         format: "orvalith-project".into(),
         app_version: env!("CARGO_PKG_VERSION").into(),
@@ -388,6 +427,11 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, OrvaError> {
             })
             .collect(),
         icc: icc_entry,
+        video: doc
+            .video
+            .as_ref()
+            .and_then(|v| serde_json::to_value(v).ok()),
+        video_stills,
         timeline: doc
             .timeline
             .as_ref()
@@ -644,6 +688,26 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
         }
     }
 
+    for e in &manifest.video_stills {
+        let ok = e.w >= 1
+            && e.h >= 1
+            && e.w <= 16384
+            && e.h <= 16384
+            && e.data.raw_len == u64::from(e.w) * u64::from(e.h) * 4
+            && e.data
+                .offset
+                .checked_add(e.data.stored_len)
+                .is_some_and(|end| end <= blob.len() as u64);
+        if !ok {
+            return Err(OrvaError::Corrupt("imagem do vídeo inválida".into()));
+        }
+        total = total.saturating_add(e.data.raw_len);
+        if total > MAX_TOTAL_PIXEL_BYTES {
+            return Err(OrvaError::TooLarge(
+                "imagens do vídeo grandes demais".into(),
+            ));
+        }
+    }
     let mut layers = Vec::with_capacity(manifest.layers.len());
     for e in &manifest.layers {
         let start = e.offset as usize;
@@ -750,6 +814,8 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
     let manifest_guides = manifest.guides;
     let manifest_comps = manifest.comps.clone();
     let manifest_timeline = manifest.timeline.clone();
+    let manifest_video = manifest.video.clone();
+    let manifest_stills = manifest.video_stills.clone();
     let icc = match &manifest.icc {
         Some(ie) => {
             if ie.raw_len > MAX_PROFILE_BYTES as u64
@@ -803,6 +869,33 @@ pub fn read(bytes: &[u8]) -> Result<Document, OrvaError> {
     );
     doc.channels = channels;
     doc.icc = icc;
+    doc.video = match manifest_video.and_then(|v| serde_json::from_value::<VideoProject>(v).ok()) {
+        Some(mut v) => {
+            v.sanitize();
+            for t in &mut v.tracks {
+                for c in &mut t.clips {
+                    if let ClipSource::Still { w, h, pixels } = &mut c.source {
+                        let entry = manifest_stills
+                            .iter()
+                            .find(|e| e.clip == c.id && e.w == *w && e.h == *h);
+                        *pixels = match entry {
+                            Some(e) => Some(std::sync::Arc::new(unpack(
+                                &e.data,
+                                blob,
+                                "imagem do vídeo",
+                            )?)),
+                            None => None,
+                        };
+                    }
+                }
+                // Imagens sem pixels gravados não podem ser exibidas: saem do projeto.
+                t.clips
+                    .retain(|c| !matches!(&c.source, ClipSource::Still { pixels: None, .. }));
+            }
+            Some(v)
+        }
+        None => None,
+    };
     doc.timeline = manifest_timeline
         .and_then(|v| serde_json::from_value::<Timeline>(v).ok())
         .map(|mut t| {
@@ -1348,5 +1441,76 @@ mod tests {
         out.extend_from_slice(bad.as_bytes());
         out.extend_from_slice(&bytes[HEADER_LEN + man_len..]);
         assert_eq!(read(&out).unwrap().timeline.unwrap().fps, 120.0);
+    }
+    #[test]
+    fn video_project_with_stills_roundtrips_and_hostile_values_are_sanitized() {
+        use crate::media::{AudioStream, MediaInfo, VideoStream};
+        use crate::video::{ClipSource, VideoProject};
+        let info = MediaInfo {
+            duration_s: 4.0,
+            format: "mp4".into(),
+            video: Some(VideoStream {
+                codec: "h264".into(),
+                width: 320,
+                height: 180,
+                fps: (25, 1),
+                frames: None,
+                pix_fmt: "yuv420p".into(),
+            }),
+            audio: Some(AudioStream {
+                codec: "aac".into(),
+                sample_rate: 48000,
+                channels: 2,
+                duration_s: 4.0,
+            }),
+        };
+        let mut p = VideoProject {
+            width: 320,
+            height: 180,
+            fps_num: 25,
+            fps_den: 1,
+            ..VideoProject::default()
+        };
+        let m = p.media_clip("C:/videos/a.mp4", "a", &info, 0);
+        let mid = m.id;
+        p.add_clip(0, m).unwrap();
+        let s = p.still_clip("Título", 2, 2, [255, 0, 0, 255].repeat(4), 10, 1.0);
+        let sid = s.id;
+        p.add_clip(1, s).unwrap();
+        p.set_fade(mid, 5, 5);
+        let mut doc = Document::new("v", 4, 4, None).unwrap();
+        doc.video = Some(p.clone());
+        let bytes = write(&doc).unwrap();
+        let back = read(&bytes).unwrap();
+        let v = back.video.clone().unwrap();
+        assert_eq!(v.tracks.len(), p.tracks.len());
+        assert_eq!(
+            v.clip(mid).map(|c| (c.start, c.duration, c.fade_in)),
+            p.clip(mid).map(|c| (c.start, c.duration, c.fade_in))
+        );
+        match &v.clip(sid).unwrap().source {
+            ClipSource::Still {
+                w,
+                h,
+                pixels: Some(px),
+            } => assert_eq!((*w, *h, px.len()), (2, 2, 16)),
+            other => panic!("{other:?}"),
+        }
+        // Valores absurdos são limitados ao ler.
+        let man_len = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        let man = String::from_utf8(bytes[HEADER_LEN..HEADER_LEN + man_len].to_vec()).unwrap();
+        let bad = man.replacen("\"fps_num\":25", "\"fps_num\":99999", 1);
+        assert_ne!(bad, man);
+        let mut out = bytes[..12].to_vec();
+        out.extend_from_slice(&(bad.len() as u32).to_le_bytes());
+        out.extend_from_slice(&crc32fast::hash(bad.as_bytes()).to_le_bytes());
+        out.extend_from_slice(bad.as_bytes());
+        out.extend_from_slice(&bytes[HEADER_LEN + man_len..]);
+        assert_eq!(read(&out).unwrap().video.unwrap().fps_num, 240);
+        // Corrupção do recurso da imagem é detectada.
+        let mut broken = bytes.clone();
+        let last = broken.len() - 1;
+        broken[last] ^= 0x33;
+        assert!(read(&broken).is_err());
     }
 }

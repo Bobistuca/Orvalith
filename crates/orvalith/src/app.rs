@@ -5,6 +5,7 @@ mod io;
 mod pdfs;
 mod selops;
 mod timeline;
+mod videoui;
 
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -104,6 +105,7 @@ enum Action {
     AdjLayer(usize),
     ToggleHist,
     ToggleTimeline,
+    ToggleVideo,
     FrameStep(i32),
     ToggleComps,
     PlaceObject(bool),
@@ -117,6 +119,7 @@ pub struct OrvalithApp {
     export: Option<ExportForm>,
     pdf_import: Option<pdfs::PdfImport>,
     timeline: timeline::TimelineUi,
+    video: videoui::VideoUi,
     pdf_export: Option<pdfs::PdfExport>,
     counter: u32,
     /// Mensagem (título, texto) para o usuário: erros, avisos e confirmações.
@@ -161,6 +164,7 @@ impl OrvalithApp {
             export: None,
             pdf_import: None,
             timeline: timeline::TimelineUi::default(),
+            video: videoui::VideoUi::default(),
             pdf_export: None,
             counter: 0,
             message: None,
@@ -359,6 +363,7 @@ impl OrvalithApp {
                 self.timeline.open = !self.timeline.open;
                 self.timeline.playing = false;
             }
+            Action::ToggleVideo => self.video.open = !self.video.open,
             Action::FrameStep(d) => self.timeline_step(d),
             Action::ToggleComps => self.comps_ui.open = !self.comps_ui.open,
             Action::PlaceObject(linked) => self.place_object(linked),
@@ -756,9 +761,14 @@ impl eframe::App for OrvalithApp {
                         actions.push(Action::ToggleTimeline);
                         ui.close();
                     }
-                    ui.small(
-                        "Quadro a quadro, quadros-chave, pele de cebola, GIF e sequência PNG.",
-                    );
+                    if ui
+                        .add_enabled(has_doc, egui::Button::new("Vídeo…"))
+                        .clicked()
+                    {
+                        actions.push(Action::ToggleVideo);
+                        ui.close();
+                    }
+                    ui.small("Vídeo exige o FFmpeg instalado (veja docs/MEDIA.md).");
                 });
                 ui.menu_button("Objetos", |ui| {
                     if ui
@@ -1420,6 +1430,8 @@ impl OrvalithApp {
         }
 
         self.adjust_windows(ctx);
+        self.video_poll(ctx);
+        self.video_window(ctx);
         self.pdf_import_window(ctx);
         self.pdf_export_window(ctx);
 

@@ -24,6 +24,7 @@ pub mod imageio;
 pub mod layerops;
 pub mod liquify;
 pub mod maskops;
+pub mod media;
 pub mod object;
 pub mod orva;
 pub mod paint;
@@ -39,6 +40,7 @@ pub mod text;
 pub mod transform;
 pub mod vecops;
 pub mod vector;
+pub mod video;
 pub mod view;
 
 pub use adjust::Adjustment;

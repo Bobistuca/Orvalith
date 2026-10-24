@@ -141,4 +141,13 @@ tags: [orvalith, matriz]
 | Exportar sequência PNG | 13 | partial | `anim.rs` teste (nomes ordenados e conteúdo idêntico ao quadro renderizado) | nunca sobrescreve (acrescenta " (n)") |
 | `.orva` v11: linha do tempo persiste e continua editável | 13 | partial | `orva.rs` teste (ida e volta, editar depois de reabrir, valores hostis limitados) | ver [[docs/ORVA_FORMAT]] |
 | APNG/WebP animado, vídeo | 13 | planned | — | exportar APNG/WebP animado não implementado; vídeo é o Estágio 14 |
-| Demais estágios (14–16) | 14–16 | planned | — | ver [[ROADMAP]] |
+| FFmpeg isolado: detecção (versão, H.264/AAC/VP9/Opus, classe de licença), `ffprobe` com metadados reais, extração de quadros com cache | 14 | partial | `media.rs` testes com FFmpeg real (pulados se ausente) | requer FFmpeg instalado (não incluído); ver [[docs/MEDIA]] |
+| Projeto de vídeo: trilhas, clipes de mídia e de imagem/título, tempos distintos (quadro do projeto × carimbo da mídia) | 14 | partial | `video.rs` testes (conversões, aparar/mover/cortar com limites, dissolver) | sem velocidade variável |
+| Aparar/mover/cortar clipes arrastando na linha do tempo | 14 | partial | lógica testada em `video.rs`; arrasto com mouse não exercitado | — |
+| Títulos e imagens por cima do vídeo; opacidade, posição/escala, ajuste de cor por clipe | 14 | partial | `video.rs` teste de composição | transformações simples |
+| Transições: fade e dissolver | 14 | partial | `video.rs` testes de rampas e exportação (mistura no dissolver) | só fade/dissolver |
+| Áudio: volume, silenciar, fades, mixagem e sincronização | 14 | partial | `video.rs` plano de filtro; exportação verificada pelo ffprobe (áudio e vídeo com a mesma duração) | sem reprodução de áudio no aplicativo; estéreo 48 kHz |
+| Exportar MP4 (H.264/AAC) e WebM (VP9/Opus) com progresso, cancelamento, resolução, taxa e qualidade | 14 | partial | `video.rs` teste de aceitação (2 clipes, aparo, título, dissolver, áudio; dimensões, taxa, duração, áudio e quadros conferidos) + cancelamento remove o arquivo parcial | feito com clipes sintéticos; players externos não automatizados |
+| Mídia relativa, ausente e relink | 14 | partial | `video.rs` teste (relativo, projeto movido, relink); `orva.rs` | caminhos em outra unidade ficam absolutos |
+| `.orva` v12: projeto de vídeo e imagens/títulos persistem | 14 | partial | `orva.rs` teste (ida e volta, hostil, CRC) | ver [[docs/ORVA_FORMAT]] |
+| Demais estágios (15–16) | 15–16 | planned | — | ver [[ROADMAP]] |

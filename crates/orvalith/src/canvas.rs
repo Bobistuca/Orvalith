@@ -72,6 +72,7 @@ pub struct OpenDoc {
     anim_key: (Option<u32>, Option<(u32, u32, u32)>),
     /// Estado da linha do tempo antes de uma edição contínua (arrastar valores).
     pub tl_drag: Option<Option<orvalith_core::anim::Timeline>>,
+    pub vid_drag: Option<Option<orvalith_core::video::VideoProject>>,
     preview: Option<std::sync::Arc<Preview>>,
     preview_key: (Option<usize>, bool),
     /// Máscara rápida: um documento cinza (255 = selecionado) editado com as ferramentas de pintura.
@@ -126,6 +127,7 @@ impl OpenDoc {
             anim_onion: None,
             anim_key: (None, None),
             tl_drag: None,
+            vid_drag: None,
             preview: None,
             preview_key: (None, true),
             qm: None,

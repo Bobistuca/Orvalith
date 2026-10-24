@@ -69,5 +69,8 @@ Decisão base: [[docs/decisions/0001-stack]].
 ## Animação (Estágio 13)
 [anim.rs](../crates/orvalith-core/src/anim.rs): `Timeline` (quadros = composições + duração; trilhas de quadros-chave por camada/propriedade), `render_frame`/`render_onion`, `export_gif`, `png_sequence`, `TimelineEdit`. O canvas mostra `render_frame` quando `OpenDoc.anim_frame` está definido. UI: [app/timeline.rs](../crates/orvalith/src/app/timeline.rs).
 
+## Vídeo e áudio (Estágio 14)
+[media.rs](../crates/orvalith-core/src/media.rs) (FFmpeg/ffprobe isolados, `FrameCache`) e [video.rs](../crates/orvalith-core/src/video.rs) (`VideoProject`, `compose_frame`, `audio_plan`, `export`). Detalhes de instalação, licença e limites em [MEDIA.md](MEDIA.md). UI: [app/videoui.rs](../crates/orvalith/src/app/videoui.rs).
+
 ## Pendente
 Tiles, compositor GPU (wgpu), jobs em segundo plano (salvar/abrir ainda bloqueiam a UI).
